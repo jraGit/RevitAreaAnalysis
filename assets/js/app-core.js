@@ -311,7 +311,7 @@ export function initializeApplication() {
       threeState.dragging = false;
       threeState.dragMode = null;
 
-      if (state.mode === '3d' && threeState.dragButton === 0 && !didMove) {
+      if (threeState.dragButton === 0 && !didMove) {
         pick3DArea(e);
       }
     });
