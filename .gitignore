@@ -1,0 +1,10 @@
+# Operating-system and editor files
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Real project data should not be committed
+*.working.json
+*.session.json
+/test-data/*.json
+!/test-data/*.sanitized.json
