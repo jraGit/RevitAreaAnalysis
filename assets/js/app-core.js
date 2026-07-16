@@ -261,6 +261,7 @@ export function initializeApplication() {
     canvas.addEventListener('pointerdown', e => {
       // 3D controls:
       // left click = pick/select areas, white canvas = deselect
+      // left drag = rotate
       // middle drag = pan
       // shift + middle drag = rotate
       // wheel = zoom
@@ -269,13 +270,12 @@ export function initializeApplication() {
 
       threeState.dragging = true;
       threeState.dragButton = e.button;
-      threeState.dragMode = e.button === 1 ? (e.shiftKey ? 'rotate' : 'pan') : 'pick';
+      threeState.dragMode = e.button === 1 ? (e.shiftKey ? 'rotate' : 'pan') : 'rotate';
       threeState.dragStart = { x: e.clientX, y: e.clientY };
       threeState.didMove = false;
 
       canvas.setPointerCapture(e.pointerId);
       if (threeState.dragMode !== 'pick') els.stack3d.classList.add('dragging');
-      if (threeState.dragMode === 'rotate') hideAll3DLabels();
     });
 
     canvas.addEventListener('pointermove', e => {
@@ -284,10 +284,13 @@ export function initializeApplication() {
 
       const dx = e.clientX - threeState.dragStart.x;
       const dy = e.clientY - threeState.dragStart.y;
-      if (Math.abs(dx) + Math.abs(dy) > 3) threeState.didMove = true;
+      const movedEnough = Math.abs(dx) + Math.abs(dy) > 3;
+      if (movedEnough) threeState.didMove = true;
       threeState.dragStart = { x: e.clientX, y: e.clientY };
 
       if (threeState.dragMode === 'rotate') {
+        if (threeState.dragButton === 0 && !threeState.didMove) return;
+        hideAll3DLabels();
         threeState.azimuth -= dx * 0.006;
         threeState.elevation += dy * 0.006;
         threeState.elevation = clamp(threeState.elevation, -Math.PI * 0.47, Math.PI * 0.47);
@@ -301,7 +304,6 @@ export function initializeApplication() {
       if (!threeState.dragging) return;
       e.preventDefault();
 
-      const dragMode = threeState.dragMode;
       const didMove = threeState.didMove;
 
       try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
@@ -309,7 +311,7 @@ export function initializeApplication() {
       threeState.dragging = false;
       threeState.dragMode = null;
 
-      if (state.mode === '3d' && dragMode === 'pick' && !didMove) {
+      if (state.mode === '3d' && threeState.dragButton === 0 && !didMove) {
         pick3DArea(e);
       }
     });
@@ -5680,7 +5682,6 @@ export function initializeApplication() {
     const el = document.createElement('div');
     el.className = `label3d floorLabel levelDatumLabel ${extraClass}`.trim();
     el.innerHTML = `
-      <span class="datum-line"></span>
       <span class="datum-text">${escapeHTML(textContent)}</span>
     `;
     return el;
@@ -6440,8 +6441,6 @@ export function initializeApplication() {
     const size = Math.max(sizeX, sizeZ, 100);
     const centerX = (b.min.x + b.max.x) / 2;
     const centerZ = (b.min.z + b.max.z) / 2;
-    const minY = 0;
-    const maxY = b.max.y;
 
     const grid = new THREE.GridHelper(size * 1.25, 30, 0xcfcac0, 0xeeeeea);
     grid.position.set(centerX, 0, centerZ);
@@ -6449,15 +6448,6 @@ export function initializeApplication() {
     grid.material.opacity = 0.36;
     grid.userData = { kind: 'helper' };
     threeState.worldGroup.add(grid);
-
-    const axisMatZ = new THREE.LineBasicMaterial({ color: 0x333333, transparent: true, opacity: 0.7 });
-    const zAxisGeom = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(b.min.x - size * 0.04, 0, b.min.z - size * 0.04),
-      new THREE.Vector3(b.min.x - size * 0.04, maxY + Math.max(12, maxY * 0.08), b.min.z - size * 0.04)
-    ]);
-    const zAxis = new THREE.Line(zAxisGeom, axisMatZ);
-    zAxis.userData = { kind: 'helper' };
-    threeState.worldGroup.add(zAxis);
   }
 
   function getLowestFloorForOrbit() {
@@ -6832,26 +6822,6 @@ export function initializeApplication() {
       groups[side].push(item);
     }
 
-    const createLeader = (item, labelX, labelY, side) => {
-      const labelWidth = item.el.offsetWidth || 120;
-      const labelEdgeX = side === 'left'
-        ? labelX - labelWidth
-        : labelX;
-      const elbowX = side === 'left'
-        ? Math.min(item._anchorScreenX - 12, labelEdgeX + 44)
-        : Math.max(item._anchorScreenX + 12, labelEdgeX - 44);
-
-      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path.setAttribute(
-        'd',
-        `M ${item._anchorScreenX.toFixed(1)} ${item._anchorScreenY.toFixed(1)} ` +
-        `L ${elbowX.toFixed(1)} ${item._anchorScreenY.toFixed(1)} ` +
-        `L ${elbowX.toFixed(1)} ${labelY.toFixed(1)} ` +
-        `L ${labelEdgeX.toFixed(1)} ${labelY.toFixed(1)}`
-      );
-      leaderSvg.appendChild(path);
-    };
-
     const placeSide = (side, laneX) => {
       const arr = groups[side].sort((a, b) => a._anchorScreenY - b._anchorScreenY);
       if (!arr.length) return;
@@ -6915,13 +6885,18 @@ export function initializeApplication() {
       for (const item of arr) {
         const cameraDistance = threeState.camera.position.distanceTo(item.anchor);
         const scale = clamp(220 / cameraDistance, 0.76, 1.02);
+        const lineEndX = laneX;
+        const lineEndY = item._layoutCenterY;
         item.el.style.left = `${laneX}px`;
         item.el.style.top = `${item._layoutCenterY}px`;
         item.el.style.transform = side === 'left'
           ? `translate(-100%, -50%) scale(${scale})`
           : `translate(0, -50%) scale(${scale})`;
         item.el.style.opacity = '1';
-        createLeader(item, laneX, item._layoutCenterY, side);
+
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', `M ${item._anchorScreenX.toFixed(1)} ${item._anchorScreenY.toFixed(1)} L ${lineEndX.toFixed(1)} ${lineEndY.toFixed(1)}`);
+        leaderSvg.appendChild(path);
       }
     };
 
