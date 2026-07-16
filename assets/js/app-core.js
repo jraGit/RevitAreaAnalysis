@@ -261,6 +261,7 @@ export function initializeApplication() {
     canvas.addEventListener('pointerdown', e => {
       // 3D controls:
       // left click = pick/select areas, white canvas = deselect
+      // left drag = rotate
       // middle drag = pan
       // shift + middle drag = rotate
       // wheel = zoom
@@ -269,13 +270,12 @@ export function initializeApplication() {
 
       threeState.dragging = true;
       threeState.dragButton = e.button;
-      threeState.dragMode = e.button === 1 ? (e.shiftKey ? 'rotate' : 'pan') : 'pick';
+      threeState.dragMode = e.button === 1 ? (e.shiftKey ? 'rotate' : 'pan') : 'rotate';
       threeState.dragStart = { x: e.clientX, y: e.clientY };
       threeState.didMove = false;
 
       canvas.setPointerCapture(e.pointerId);
       if (threeState.dragMode !== 'pick') els.stack3d.classList.add('dragging');
-      if (threeState.dragMode === 'rotate') hideAll3DLabels();
     });
 
     canvas.addEventListener('pointermove', e => {
@@ -284,10 +284,13 @@ export function initializeApplication() {
 
       const dx = e.clientX - threeState.dragStart.x;
       const dy = e.clientY - threeState.dragStart.y;
-      if (Math.abs(dx) + Math.abs(dy) > 3) threeState.didMove = true;
+      const movedEnough = Math.abs(dx) + Math.abs(dy) > 3;
+      if (movedEnough) threeState.didMove = true;
       threeState.dragStart = { x: e.clientX, y: e.clientY };
 
       if (threeState.dragMode === 'rotate') {
+        if (threeState.dragButton === 0 && !threeState.didMove) return;
+        hideAll3DLabels();
         threeState.azimuth -= dx * 0.006;
         threeState.elevation += dy * 0.006;
         threeState.elevation = clamp(threeState.elevation, -Math.PI * 0.47, Math.PI * 0.47);
@@ -301,7 +304,6 @@ export function initializeApplication() {
       if (!threeState.dragging) return;
       e.preventDefault();
 
-      const dragMode = threeState.dragMode;
       const didMove = threeState.didMove;
 
       try { canvas.releasePointerCapture(e.pointerId); } catch (_) { }
@@ -309,7 +311,7 @@ export function initializeApplication() {
       threeState.dragging = false;
       threeState.dragMode = null;
 
-      if (state.mode === '3d' && dragMode === 'pick' && !didMove) {
+      if (state.mode === '3d' && threeState.dragButton === 0 && !didMove) {
         pick3DArea(e);
       }
     });
