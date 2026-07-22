@@ -8,6 +8,7 @@ export function getDomElements() {
     paneResizer: document.getElementById('paneResizer'),
     sidebar: document.getElementById('sidebar'),
     sidebarResizer: document.getElementById('sidebarResizer'),
+    sidebarSplitResizer: document.getElementById('sidebarSplitResizer'),
     dropOverlay: document.getElementById('dropOverlay'),
     fileInput: document.getElementById('fileInput'),
     mode2dBtn: document.getElementById('mode2dBtn'),
@@ -102,14 +103,7 @@ export function getDomElements() {
     editorUndoDeleteBtn: document.getElementById('editorUndoDeleteBtn'),
     editorSaveJsonBtn: document.getElementById('editorSaveJsonBtn'),
     editorExportTransformerBtn: document.getElementById('editorExportTransformerBtn'),
-    editorValidationText: document.getElementById('editorValidationText'),
-    setTabProject: document.getElementById('setTabProject'),
-    setTabActiveFloor: document.getElementById('setTabActiveFloor'),
-    setTabUnitMix: document.getElementById('setTabUnitMix'),
-    setTabLevelSummary: document.getElementById('setTabLevelSummary'),
-    setTabAreaByCategory: document.getElementById('setTabAreaByCategory'),
-    setTabExcludedExteriorAreas: document.getElementById('setTabExcludedExteriorAreas'),
-    setTabAreaRegister: document.getElementById('setTabAreaRegister')
+    editorValidationText: document.getElementById('editorValidationText')
   };
 
   const required = [
@@ -127,6 +121,7 @@ export function getDomElements() {
 export function wirePresentationSheet() {
   const fileInput = document.getElementById('fileInput');
   const chooseFileBtn = document.getElementById('chooseFileBtn');
+  const exportIconBtn = document.getElementById('exportIconBtn');
   const loadedFileLabel = document.getElementById('loadedFileLabel');
   const floorSelect = document.getElementById('floorSelect');
   const levelNumberDisplay = document.getElementById('levelNumberDisplay');
@@ -135,6 +130,17 @@ export function wirePresentationSheet() {
 
   if (chooseFileBtn && fileInput) {
     chooseFileBtn.addEventListener('click', () => fileInput.click());
+  }
+
+  if (exportIconBtn) {
+    exportIconBtn.addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = './dataRaw.program.xlsx';
+      a.download = 'dataRaw.program.xlsx';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
   }
 
   if (fileInput && loadedFileLabel) {

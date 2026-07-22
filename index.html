@@ -73,8 +73,8 @@
           </div>
         </div>
         <div class="pane-controls pane-controls-3d" aria-label="3D view controls">
-          <button id="fitBtn" type="button" title="Fit 3D view">⊞ Fit</button>
           <button id="zoom3dOutBtn" type="button" title="Zoom out 3D view" aria-label="Zoom out 3D view">−</button>
+          <button id="fitBtn" type="button" title="Fit 3D view">⊞ Fit</button>
           <button id="zoom3dInBtn" type="button" title="Zoom in 3D view" aria-label="Zoom in 3D view">+</button>
           <details id="displayOptions3d" class="pane-display-control">
             <summary>Display ▾</summary>
@@ -165,10 +165,6 @@
 
     <aside id="sidebar">
       <div id="sidebarResizer" title="Resize data panel"></div>
-      <div class="sidebar-sheet-level">
-        <div class="level-number" id="levelNumberDisplay">—</div>
-        <div class="level-caption">Level</div>
-      </div>
       <div style="display:none">
         <div id="floorList" class="floor-list small"></div>
         <div id="selectedInfo"></div>
@@ -178,24 +174,17 @@
         <div class="sidebar-level-control">
           <label for="floorSelect">Active Level</label>
           <select id="floorSelect" title="Loaded Revit levels"></select>
+          <button id="chooseFileBtn" type="button" class="sidebar-icon-btn" title="Open area analysis file" aria-label="Open area analysis file"><span class="open-file-icon" aria-hidden="true"></span></button>
+          <button id="exportIconBtn" type="button" class="sidebar-icon-btn" title="Download program Excel file" aria-label="Download program Excel file"><span class="export-file-icon" aria-hidden="true"></span></button>
+          <button id="settingsBtn" type="button" class="sidebar-icon-btn" title="Viewer settings" aria-label="Viewer settings">⚙</button>
         </div>
         <div class="sidebar-tabs" id="reportTabs">
-          <button type="button" class="active" data-tab="project">Project Information</button>
-          <button type="button" data-tab="activeFloor">Active Floor Summary</button>
+          <button type="button" class="active" data-tab="project">Summary</button>
           <button type="button" data-tab="unitMix">Unit Mix</button>
-          <button type="button" data-tab="levelSummary">Level Summary</button>
-          <button type="button" data-tab="areaByCategory">Area by Category</button>
-          <button type="button" data-tab="excludedExteriorAreas">Excluded Exterior Areas</button>
-          <button type="button" data-tab="areaRegister">Area Register</button>
         </div>
 
         <div id="projectTabPanel" class="sidebar-tab-panel active">
           <div class="body" id="projectInfoPanel">
-            <div class="small">Import one combined Area Plan batch JSON file.</div>
-          </div>
-        </div>
-        <div id="activeFloorTabPanel" class="sidebar-tab-panel">
-          <div class="body" id="floorSummary">
             <div class="small">Import one combined Area Plan batch JSON file.</div>
           </div>
         </div>
@@ -204,38 +193,15 @@
             <div class="small">Import one combined Area Plan batch JSON file.</div>
           </div>
         </div>
-        <div id="levelSummaryTabPanel" class="sidebar-tab-panel">
-          <div class="body" id="levelSummaryPanel">
-            <div class="small">Import one combined Area Plan batch JSON file.</div>
-          </div>
-        </div>
-        <div id="areaByCategoryTabPanel" class="sidebar-tab-panel">
-          <div class="body" id="areaByCategoryPanel">
-            <div class="small">Import one combined Area Plan batch JSON file.</div>
-          </div>
-        </div>
-        <div id="excludedExteriorAreasTabPanel" class="sidebar-tab-panel">
-          <div class="body" id="excludedExteriorAreasPanel">
-            <div class="small">Import one combined Area Plan batch JSON file.</div>
-          </div>
-        </div>
-        <div id="areaRegisterTabPanel" class="sidebar-tab-panel">
-          <div class="body" id="areaRegisterPanel">
-            <div class="small">Import one combined Area Plan batch JSON file.</div>
-          </div>
-        </div>
       </div>
 
-      <div class="sidebar-file-actions" aria-label="File and editor actions">
-        <button id="clearBtn" type="button" class="btn-sheet ghost-sm">Clear</button>
-        <button id="settingsBtn" type="button" class="btn-sheet ghost-sm">Settings</button>
-        <button id="developerToolsBtn" type="button" class="btn-sheet ghost-sm">Editor</button>
-        <button id="chooseFileBtn" type="button" class="sidebar-choose-file" title="Choose another file" aria-label="Choose another file">Open</button>
+      <div id="sidebarSplitResizer" class="sidebar-split-resizer" title="Resize report and legend panels"></div>
+
+      <div class="sidebar-file-actions" aria-label="File status">
         <span class="loaded-label" id="loadedFileLabel" hidden>LOADED: <strong>no file</strong></span>
       </div>
 
       <section class="sidebar-legend-wrap" aria-label="Style Legend">
-        <div class="sidebar-legend-title">Area Category Legend</div>
         <div class="legend" id="styleLegend">
           <div class="small">Import a file to build the area-category legend.</div>
         </div>
@@ -269,20 +235,11 @@
             <label class="settings-opacity-row">Column opacity <small>0 clear / 1 solid</small> <input id="setColumnOpacity" type="range" min="0"
                 max="1" step="0.05" value="0.15" /><span id="setColumnOpacityValue">0.15</span></label>
           </div>
-          <div class="settings-subtitle">Right-side report tabs</div>
-          <div class="settings-grid">
-            <label>Project Information <input id="setTabProject" type="checkbox" checked /></label>
-            <label>Active Floor Summary <input id="setTabActiveFloor" type="checkbox" checked /></label>
-            <label>Unit Mix <input id="setTabUnitMix" type="checkbox" checked /></label>
-            <label>Level Summary <input id="setTabLevelSummary" type="checkbox" /></label>
-            <label>Area by Category <input id="setTabAreaByCategory" type="checkbox" checked /></label>
-            <label>Excluded Exterior Areas <input id="setTabExcludedExteriorAreas" type="checkbox" /></label>
-            <label>Area Register <input id="setTabAreaRegister" type="checkbox" /></label>
-          </div>
           <div class="settings-subtitle">Area colors by area_category</div>
           <div id="areaGroupSettings" class="group-color-grid"></div>
         </div>
         <div class="modal-footer">
+          <button id="developerToolsBtn" type="button">Editor</button>
           <button id="settingsResetBtn" type="button">Reset Defaults</button>
           <button id="settingsApplyBtn" type="button">Apply</button>
         </div>
@@ -293,6 +250,10 @@
     <footer class="sheet-footer">
       <div class="ftitem ftfirm">Nichols Architects</div>
       <div class="ftitem ftproject" id="sheetTitleDisplay">Project Analysis</div>
+      <div class="footer-level-id">
+        <div class="level-number" id="levelNumberDisplay">—</div>
+        <div class="level-caption">Level</div>
+      </div>
       <div class="footer-end-accent" aria-hidden="true"></div>
     </footer>
   </div>

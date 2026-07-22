@@ -75,6 +75,7 @@ export function initializeApplication() {
   initThree();
   initPaneResizer();
   initSidebarResizer();
+  initSidebarSplitResizer();
   applyReportTabVisibility();
   updateFloorControls();
   updateSummary();
@@ -1243,20 +1244,158 @@ export function initializeApplication() {
     return state.styleSettings.areaColorMap?.[group] || '#e8eefc';
   }
 
+  function cssRgbChannelsFromColor(color) {
+    const text = String(color || '').trim();
+    const hexMatch = text.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hexMatch) {
+      const hex = hexMatch[1].length === 3
+        ? hexMatch[1].split('').map(ch => ch + ch).join('')
+        : hexMatch[1];
+      const value = parseInt(hex, 16);
+      return `${(value >> 16) & 255}, ${(value >> 8) & 255}, ${value & 255}`;
+    }
+    const rgbMatch = text.match(/^rgba?\(\s*(\d{1,3})\D+(\d{1,3})\D+(\d{1,3})/i);
+    if (rgbMatch) {
+      return [rgbMatch[1], rgbMatch[2], rgbMatch[3]]
+        .map(value => clamp(Math.round(Number(value)), 0, 255))
+        .join(', ');
+    }
+    return '';
+  }
+
+  function categoryHighlightStyle(category) {
+    const color = state.styleSettings.areaColorMap?.[category] || getDefaultAreaColor(category);
+    const channels = cssRgbChannelsFromColor(color);
+    return channels ? ` style="--row-highlight-rgb: ${channels};"` : '';
+  }
+
+  function activeFloorRowHighlightStyle(category) {
+    return categoryHighlightStyle(category);
+  }
+
   function renderStyleLegend() {
     if (!els.styleLegend) return;
     if (!state.areaGroups.length) {
       els.styleLegend.innerHTML = '<div class="small">Import a file to build the area-category legend.</div>';
       return;
     }
-    els.styleLegend.innerHTML = state.areaGroups.map(group => `
-  <div class="item"><span class="swatch" style="background:${escapeHTML(state.styleSettings.areaColorMap[group] || '#e8eefc')}"></span>${escapeHTML(group)}</div>
+    const totals = buildLegendCategoryTotalMap();
+    const sections = [
+      { key: 'sellable', label: 'Sellable / Leasable' },
+      { key: 'nonSellable', label: 'Non-Sellable' },
+      { key: 'notCounted', label: 'Not Counted' }
+    ].map(section => ({
+      ...section,
+      groups: state.areaGroups.filter(group =>
+        toNum(totals.get(normalizeReportKey(group))?.sqft, 0) > 0 &&
+        legendCategoryBucket(group, totals) === section.key
+      )
+    })).filter(section => section.groups.length);
+    els.styleLegend.innerHTML = sections.map(section => `
+  <div class="legend-section-title">${escapeHTML(section.label)}</div>
+  ${section.groups.map(group => `
+  <div class="item"><span class="swatch" style="background:${escapeHTML(state.styleSettings.areaColorMap[group] || '#e8eefc')}"></span>${escapeHTML(legendCategoryLabel(group, totals))}</div>
+  `).join('')}
   `).join('');
+  }
+
+  function buildLegendCategoryTotalMap() {
+    const totals = new Map();
+    const ensureTotal = (category) => {
+      const key = normalizeReportKey(category);
+      if (!key) return null;
+      if (!totals.has(key)) totals.set(key, { sqft: 0, grossSqft: 0, sellableSqft: 0, hasSummarySqft: false });
+      return totals.get(key);
+    };
+    const addTotal = (category, sqft) => {
+      const total = ensureTotal(category);
+      if (!total) return;
+      total.sqft += toNum(sqft, 0);
+      total.hasSummarySqft = true;
+    };
+    const addDetailTotal = (category, sqft, includeInGross, includeInSellable) => {
+      const total = ensureTotal(category);
+      if (!total) return;
+      const areaSqft = toNum(sqft, 0);
+      if (!total.hasSummarySqft) total.sqft += areaSqft;
+      if (isIncludedInGross(includeInGross)) total.grossSqft += areaSqft;
+      if (isIncludedInGross(includeInSellable)) total.sellableSqft += areaSqft;
+    };
+
+    for (const row of state.reportData?.areaByCategory || []) {
+      addTotal(row.area_category, row.total_sqft);
+    }
+
+    for (const row of state.reportData?.register || []) {
+      const category = row.area_category;
+      addDetailTotal(
+        category,
+        row.area_sqft,
+        row.include_in_gross ?? inferIncludesFromCategory(category, 'gross'),
+        row.include_in_sellable ?? inferIncludesFromCategory(category, 'sellable')
+      );
+    }
+
+    for (const group of state.areaGroups || []) {
+      const key = normalizeReportKey(group);
+      if (!key || totals.get(key)?.sqft) continue;
+      let sqft = 0;
+      let grossSqft = 0;
+      const isNotCountedGroup = isNotCountedCategory(group);
+      for (const floor of state.floors || []) {
+        for (const area of floor.areas || []) {
+          if (normalizeReportKey(areaCategory(area)) !== key) continue;
+          if (isExcludedFromReportCalculations(area) && !isNotCountedGroup) continue;
+          const areaSqft = areaSqFt(area);
+          sqft += areaSqft;
+          if (!isNotCountedGroup && inferIncludesFromCategory(group, 'gross')) grossSqft += areaSqft;
+        }
+      }
+      totals.set(key, {
+        sqft,
+        grossSqft,
+        sellableSqft: inferIncludesFromCategory(group, 'sellable') ? sqft : 0,
+        hasSummarySqft: false
+      });
+    }
+
+    return totals;
+  }
+
+  function legendCategoryLabel(group, totals) {
+    const total = totals.get(normalizeReportKey(group)) || { sqft: 0, grossSqft: 0 };
+    return `${group} (${fmt(total.sqft, 0)} SF)`;
+  }
+
+  function legendCategoryNeedsGrossNote(group, totals) {
+    const total = totals.get(normalizeReportKey(group)) || { sqft: 0, grossSqft: 0 };
+    return total.sqft > 0 && total.grossSqft <= 0;
+  }
+
+  function legendCategoryBucket(group, totals) {
+    if (legendCategoryNeedsGrossNote(group, totals)) return 'notCounted';
+    if (isSellableCategory(group)) return 'sellable';
+    return 'nonSellable';
+  }
+
+  function isIncludedInGross(value) {
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (['false', 'no', '0'].includes(normalized)) return false;
+      if (['true', 'yes', '1'].includes(normalized)) return true;
+    }
+    return !!value;
   }
 
 
   function boolText(value) {
     return value ? 'Yes' : 'No';
+  }
+
+  function sf(value, digits = 0) {
+    const n = Number(value);
+    if (!Number.isFinite(n) || Math.abs(n) < 0.000001) return '--';
+    return `${fmt(n, digits)} SF`;
   }
 
   function pct(value) {
@@ -1265,15 +1404,60 @@ export function initializeApplication() {
     return `${fmt(n * 100, 1)}%`;
   }
 
+  const SELLABLE_CATEGORY_KEYS = new Set([
+    'BRANDED RESIDENTIAL',
+    'SHORT TERM RENTAL (STR)',
+    'HOTEL',
+    'OFFICE',
+    'RETAIL/COMMERCIAL'
+  ]);
+
+  const NON_SELLABLE_CATEGORY_KEYS = new Set([
+    'AMENITIES',
+    'BOH/MEP',
+    'CIRCULATION',
+    'CORE',
+    'HOTEL OTHER',
+    'PARKING',
+    'STR OTHER',
+    'BRANDED RESI OTHER'
+  ]);
+
+  const NOT_COUNTED_CATEGORY_KEYS = new Set([
+    'EXTERIOR DECK',
+    'EXTERIOR DECKS'
+  ]);
+
+  function normalizedCategoryRuleKey(category) {
+    return normalizeReportKey(category).replace(/\s*\/\s*/g, '/');
+  }
+
+  function isSellableCategory(category) {
+    return SELLABLE_CATEGORY_KEYS.has(normalizedCategoryRuleKey(category));
+  }
+
+  function isNonSellableCategory(category) {
+    return NON_SELLABLE_CATEGORY_KEYS.has(normalizedCategoryRuleKey(category));
+  }
+
+  function isNotCountedCategory(category) {
+    const key = normalizedCategoryRuleKey(category);
+    return NOT_COUNTED_CATEGORY_KEYS.has(key) || key.startsWith('EXTERIOR DECK');
+  }
+
+  function isExteriorAreaType(value) {
+    return normalizeReportKey(value) === 'EXTERIOR AREA';
+  }
+
+  function isExcludedFromReportCalculations(rowOrArea) {
+    const category = rowOrArea?.area_category ?? rowOrArea?.Area_Category ?? rowOrArea?.category ?? areaCategory(rowOrArea);
+    return isExteriorAreaType(rowOrArea?.area_type ?? rowOrArea?.Area_Type) || isNotCountedCategory(category);
+  }
+
   function inferIncludesFromCategory(category, field) {
-    const c = String(category || '').toUpperCase();
-    if (field === 'gross') return !c.includes('EXTERIOR DECK');
-    if (field === 'unitMix') return c.includes('RESIDENTIAL') || c.includes('SHORT TERM') || c.includes('BRANDED');
-    if (field === 'sellable') {
-      return c.includes('RESIDENTIAL') || c.includes('SHORT TERM') || c.includes('BRANDED') ||
-        c.includes('RETAIL') || c.includes('COMMERCIAL') || c.includes('OFFICE') ||
-        c.includes('FOOD') || c.includes('HOTEL KEY') || c.includes('HOTEL GUEST');
-    }
+    if (field === 'gross') return !isNotCountedCategory(category);
+    if (field === 'unitMix') return ['BRANDED RESIDENTIAL', 'SHORT TERM RENTAL (STR)', 'HOTEL'].includes(normalizedCategoryRuleKey(category));
+    if (field === 'sellable') return isSellableCategory(category);
     return false;
   }
 
@@ -1293,8 +1477,9 @@ export function initializeApplication() {
       area_category: category,
       area_type: area.area_type || '',
       group_name: area.group_name || '',
+      tower: area.tower ?? '',
       include_in_gross: area.include_in_gross ?? inferIncludesFromCategory(category, 'gross'),
-      include_in_sellable: area.include_in_sellable ?? inferIncludesFromCategory(category, 'sellable'),
+      include_in_sellable: inferIncludesFromCategory(category, 'sellable'),
       include_in_unit_mix: area.include_in_unit_mix ?? inferIncludesFromCategory(category, 'unitMix'),
       notes: area.classification_notes || area.notes || '',
       unit_mix_key: area.unit_mix_key || ''
@@ -1317,8 +1502,9 @@ export function initializeApplication() {
       area_category: category,
       area_type: row.area_type ?? row.Area_Type ?? '',
       group_name: row.group_name ?? '',
+      tower: row.tower ?? row.Tower ?? row.tower_name ?? row.Tower_Name ?? '',
       include_in_gross: row.include_in_gross ?? inferIncludesFromCategory(category, 'gross'),
-      include_in_sellable: row.include_in_sellable ?? inferIncludesFromCategory(category, 'sellable'),
+      include_in_sellable: inferIncludesFromCategory(category, 'sellable'),
       include_in_unit_mix: row.include_in_unit_mix ?? inferIncludesFromCategory(category, 'unitMix'),
       notes: row.notes ?? row.classification_notes ?? '',
       unit_mix_key: row.unit_mix_key ?? ''
@@ -1412,27 +1598,71 @@ export function initializeApplication() {
     return byLevel.sort((a, b) => (order.get(a.level_name) ?? 99999) - (order.get(b.level_name) ?? 99999));
   }
 
+  function towerGrossBucket(row) {
+    const levelName = normalizeReportKey(row?.level_name);
+    const levelMatch = levelName.match(/\bLEVEL\s*(\d+)\b/);
+    const levelNumber = levelMatch ? Number(levelMatch[1]) : NaN;
+    if (Number.isFinite(levelNumber) && levelNumber >= 1 && levelNumber <= 10) return 'podium';
+    if (/^S\b/.test(levelName)) return 'south';
+    if (/^N\b/.test(levelName)) return 'north';
+
+    const towerKey = normalizeReportKey(row?.tower);
+    if (towerKey === 'S' || towerKey.includes('SOUTH')) return 'south';
+    if (towerKey === 'N' || towerKey.includes('NORTH')) return 'north';
+    return 'podium';
+  }
+
+  function buildTowerSummary(rows) {
+    const totals = {
+      podium: { gross: 0, sellable: 0 },
+      south: { gross: 0, sellable: 0 },
+      north: { gross: 0, sellable: 0 }
+    };
+    for (const row of rows || []) {
+      const bucket = towerGrossBucket(row);
+      const sqft = toNum(row.area_sqft, 0);
+      if (row.include_in_gross) totals[bucket].gross += sqft;
+      if (row.include_in_sellable) totals[bucket].sellable += sqft;
+    }
+    for (const bucket of Object.keys(totals)) {
+      totals[bucket].nonSellable = totals[bucket].gross - totals[bucket].sellable;
+    }
+    return totals;
+  }
+
   function buildReportData(json, floors) {
     const summary = json.summary || {};
-    const register = (Array.isArray(json.area_register) ? json.area_register : buildRegisterFromFloors(floors)).map(normalizeRegisterRow);
-    const gross = toNum(summary.total_gross_sqft, register.filter(r => r.include_in_gross).reduce((sum, r) => sum + toNum(r.area_sqft, 0), 0));
-    const sellable = toNum(summary.total_sellable_sqft, register.filter(r => r.include_in_sellable).reduce((sum, r) => sum + toNum(r.area_sqft, 0), 0));
-    const unitCount = toNum(summary.unit_count, register.filter(r => r.include_in_unit_mix).length);
-    const areaByCategory = Array.isArray(summary.area_by_category) && summary.area_by_category.length ? summary.area_by_category : buildAreaByCategory(register, gross);
-    const levelSummary = Array.isArray(summary.level_summary) && summary.level_summary.length ? summary.level_summary : buildLevelSummary(register, floors);
-    const unitMix = Array.isArray(summary.unit_mix) && summary.unit_mix.length ? summary.unit_mix : buildUnitMix(register);
-    const excludedExteriorAreas = Array.isArray(summary.excluded_exterior_areas) ? summary.excluded_exterior_areas : [];
+    const register = (Array.isArray(json.area_register) ? json.area_register : buildRegisterFromFloors(floors))
+      .map(normalizeRegisterRow)
+      .filter(row => !isExcludedFromReportCalculations(row));
+    const gross = register.filter(r => r.include_in_gross).reduce((sum, r) => sum + toNum(r.area_sqft, 0), 0);
+    const sellable = register.filter(r => r.include_in_sellable).reduce((sum, r) => sum + toNum(r.area_sqft, 0), 0);
+    const towerSummary = buildTowerSummary(register);
+    const unitCount = register.filter(r => r.include_in_unit_mix).length;
+    const areaByCategory = buildAreaByCategory(register, gross);
+    const levelSummary = buildLevelSummary(register, floors);
+    const unitMix = buildUnitMix(register);
+    const excludedExteriorAreas = [];
 
     return {
       summary: {
         totalGrossSqft: gross,
         totalSellableSqft: sellable,
-        totalNonSellableSqft: toNum(summary.total_non_sellable_sqft, gross - sellable),
-        efficiencyRatio: toNum(summary.efficiency_ratio, gross ? sellable / gross : 0),
-        areaCount: toNum(summary.area_count, register.length),
+        totalNonSellableSqft: gross - sellable,
+        podiumGrossSqft: towerSummary.podium.gross,
+        podiumSellableSqft: towerSummary.podium.sellable,
+        podiumNonSellableSqft: towerSummary.podium.nonSellable,
+        southTowerGrossSqft: towerSummary.south.gross,
+        southTowerSellableSqft: towerSummary.south.sellable,
+        southTowerNonSellableSqft: towerSummary.south.nonSellable,
+        northTowerGrossSqft: towerSummary.north.gross,
+        northTowerSellableSqft: towerSummary.north.sellable,
+        northTowerNonSellableSqft: towerSummary.north.nonSellable,
+        efficiencyRatio: gross ? sellable / gross : 0,
+        areaCount: register.length,
         unitCount,
-        excludedExteriorAreaCount: toNum(summary.excluded_exterior_area_count, excludedExteriorAreas.length),
-        excludedExteriorAreaSqft: toNum(summary.excluded_exterior_area_sqft, excludedExteriorAreas.reduce((sum, r) => sum + toNum(r.area_sqft, 0), 0)),
+        excludedExteriorAreaCount: 0,
+        excludedExteriorAreaSqft: 0,
         areaTypeRule: summary.area_type_rule || '',
         levelsCount: floors.length
       },
@@ -1447,10 +1677,11 @@ export function initializeApplication() {
   function tableHTML(columns, rows, limit = 300) {
     const safeRows = Array.isArray(rows) ? rows : [];
     const displayRows = safeRows.slice(0, limit);
-    const head = columns.map(c => `<th class="${c.text ? 'text' : ''}">${escapeHTML(c.label)}</th>`).join('');
+    const columnClass = c => [c.text ? 'text' : '', c.center ? 'center' : ''].filter(Boolean).join(' ');
+    const head = columns.map(c => `<th class="${columnClass(c)}">${escapeHTML(c.label)}</th>`).join('');
     const body = displayRows.map(row => `<tr>${columns.map(c => {
       const value = c.value(row);
-      return `<td class="${c.text ? 'text' : ''}">${value}</td>`;
+      return `<td class="${columnClass(c)}">${value}</td>`;
     }).join('')}</tr>`).join('');
     const note = safeRows.length > limit ? `<div class="report-note">Showing first ${fmt(limit, 0)} of ${fmt(safeRows.length, 0)} rows to keep the viewer responsive.</div>` : '';
     return `${note}<div class="table-wrap"><table class="report-table"><thead><tr>${head}</tr></thead><tbody>${body || '<tr><td class="text" colspan="' + columns.length + '">No rows.</td></tr>'}</tbody></table></div>`;
@@ -1471,10 +1702,11 @@ export function initializeApplication() {
     return rawName || 'Unnamed';
   }
 
-  function groupedTableHTML(groupKeyFn, columns, rows, limit = 300) {
+  function groupedTableHTML(groupKeyFn, columns, rows, limit = 300, options = {}) {
     const safeRows = Array.isArray(rows) ? rows : [];
     const displayRows = safeRows.slice(0, limit);
-    const head = columns.map(c => `<th class="${c.text ? 'text' : ''}">${escapeHTML(c.label)}</th>`).join('');
+    const columnClass = c => [c.text ? 'text' : '', c.center ? 'center' : ''].filter(Boolean).join(' ');
+    const head = columns.map(c => `<th class="${columnClass(c)}">${escapeHTML(c.label)}</th>`).join('');
     const groups = new Map();
     for (const row of displayRows) {
       const groupName = groupKeyFn(row) || 'Uncategorized';
@@ -1482,12 +1714,18 @@ export function initializeApplication() {
       groups.get(groupName).push(row);
     }
     const body = [...groups.entries()].map(([groupName, groupRows]) => {
-      const groupHeader = `<tr class="group-row"><td colspan="${columns.length}">${escapeHTML(groupName)}</td></tr>`;
+      const groupStyle = options.groupStyle ? options.groupStyle(groupName, groupRows) : '';
+      const groupHeader = `<tr class="group-row"${groupStyle}><td colspan="${columns.length}">${escapeHTML(groupName)}</td></tr>`;
       const groupBody = groupRows.map(row => `<tr>${columns.map(c => {
         const value = c.value(row);
-        return `<td class="${c.text ? 'text' : ''}">${value}</td>`;
+        return `<td class="${columnClass(c)}">${value}</td>`;
       }).join('')}</tr>`).join('');
-      return groupHeader + groupBody;
+      const hasGroupTotals = columns.some(column => column.groupValue);
+      const groupTotal = hasGroupTotals ? `<tr class="group-total-row">${columns.map((column, index) => {
+        const value = index === 0 ? 'TOTAL:' : (column.groupValue ? column.groupValue(groupRows) : '');
+        return `<td class="${columnClass(column)}">${value}</td>`;
+      }).join('')}</tr>` : '';
+      return groupHeader + groupBody + groupTotal;
     }).join('');
     const note = safeRows.length > limit ? `<div class="report-note">Showing first ${fmt(limit, 0)} of ${fmt(safeRows.length, 0)} rows to keep the viewer responsive.</div>` : '';
     return `${note}<div class="table-wrap"><table class="report-table"><thead><tr>${head}</tr></thead><tbody>${body || '<tr><td class="text" colspan="' + columns.length + '">No rows.</td></tr>'}</tbody></table></div>`;
@@ -1500,6 +1738,16 @@ export function initializeApplication() {
       count: toNum(row.count, 0),
       totalSqft: toNum(row.total_sqft, 0)
     };
+  }
+
+  const UNIT_MIX_DISPLAY_CATEGORIES = new Set([
+    'BRANDED RESIDENTIAL',
+    'SHORT TERM RENTAL (STR)',
+    'HOTEL'
+  ]);
+
+  function isDisplayedUnitMixCategory(row) {
+    return UNIT_MIX_DISPLAY_CATEGORIES.has(normalizeReportKey(row?.area_category));
   }
 
   function selectedAreaCard(floor, area) {
@@ -1525,9 +1773,9 @@ export function initializeApplication() {
     const s = state.reportData.summary || {};
     els.summaryPanel.innerHTML = `
   <div class="metric-grid">
-    <div class="metric-card"><div class="label">Total Gross SF</div><div class="value">${fmt(s.totalGrossSqft, 0)}</div></div>
-    <div class="metric-card"><div class="label">Sellable / Leasable SF</div><div class="value">${fmt(s.totalSellableSqft, 0)}</div></div>
-    <div class="metric-card"><div class="label">Non-Sellable SF</div><div class="value">${fmt(s.totalNonSellableSqft, 0)}</div></div>
+    <div class="metric-card"><div class="label">Total Gross SF</div><div class="value">${sf(s.totalGrossSqft)}</div></div>
+    <div class="metric-card"><div class="label">Sellable / Leasable SF</div><div class="value">${sf(s.totalSellableSqft)}</div></div>
+    <div class="metric-card"><div class="label">Non-Sellable SF</div><div class="value">${sf(s.totalNonSellableSqft)}</div></div>
     <div class="metric-card"><div class="label">Efficiency</div><div class="value">${fmt((s.efficiencyRatio || 0) * 100, 1)}%</div></div>
     <div class="metric-card"><div class="label">Unit Count</div><div class="value">${fmt(s.unitCount, 0)}</div></div>
     <div class="metric-card"><div class="label">Area Count</div><div class="value">${fmt(s.areaCount, 0)}</div></div>
@@ -1536,41 +1784,40 @@ export function initializeApplication() {
   }
 
   function renderUnitMix() {
-    const rows = [...(state.reportData.unitMix || [])].sort((a, b) =>
+    const rows = [...(state.reportData.unitMix || [])].filter(isDisplayedUnitMixCategory).sort((a, b) =>
       String(a.area_category || '').localeCompare(String(b.area_category || '')) ||
       cleanUnitMixAreaName(a).localeCompare(cleanUnitMixAreaName(b))
     );
     els.unitMixPanel.innerHTML = groupedTableHTML(
       r => r.area_category || 'Unit Mix',
       [
-        { label: 'Area Name', text: true, value: r => escapeHTML(cleanUnitMixAreaName(r)) },
-        { label: 'Count', value: r => fmt(r.count, 0) },
-        { label: 'Total SF', value: r => fmt(r.total_sqft, 0) },
-        { label: 'Min Unit SF', value: r => fmt(r.min_unit_sqft, 0) },
-        { label: 'Max Unit SF', value: r => fmt(r.max_unit_sqft, 0) },
-        { label: 'Average Unit SF', value: r => fmt(r.average_unit_sqft, 0) },
-        { label: '% Total Units', value: r => pct(r.pct_of_total_units) },
-        { label: '% Total Unit Area', value: r => pct(r.pct_of_total_unit_area) }
+        { label: 'Name', text: true, value: r => escapeHTML(cleanUnitMixAreaName(r)) },
+        { label: '#', center: true, value: r => fmt(r.count, 0), groupValue: rows => fmt(rows.reduce((sum, r) => sum + toNum(r.count, 0), 0), 0) },
+        { label: 'Total', center: true, value: r => sf(r.total_sqft), groupValue: rows => sf(rows.reduce((sum, r) => sum + toNum(r.total_sqft, 0), 0)) },
+        { label: 'Min Unit', center: true, value: r => sf(r.min_unit_sqft) },
+        { label: 'Average Unit', center: true, value: r => sf(r.average_unit_sqft) },
+        { label: 'Max Unit', center: true, value: r => sf(r.max_unit_sqft) }
       ],
       rows,
-      300
+      300,
+      { groupStyle: groupName => categoryHighlightStyle(groupName) }
     );
   }
 
   function renderLevelSummaryReport() {
     els.levelSummaryPanel.innerHTML = tableHTML([
       { label: 'Level Name', text: true, value: r => escapeHTML(r.level_name || '') },
-      { label: 'Gross SF', value: r => fmt(r.gross_sqft, 0) },
-      { label: 'Sellable / Leasable SF', value: r => fmt(r.sellable_leasable_sqft ?? r.sellable_sqft, 0) },
-      { label: 'Non-Sellable SF', value: r => fmt(r.non_sellable_sqft, 0) },
+      { label: 'Gross SF', value: r => sf(r.gross_sqft) },
+      { label: 'Sellable / Leasable SF', value: r => sf(r.sellable_leasable_sqft ?? r.sellable_sqft) },
+      { label: 'Non-Sellable SF', value: r => sf(r.non_sellable_sqft) },
       { label: 'Short Term Rental Units', value: r => fmt(r.short_term_rental_units, 0) },
       { label: 'Branded Residential Units', value: r => fmt(r.branded_residential_units, 0) },
       { label: 'Hotel Guestrooms', value: r => fmt(r.hotel_guestrooms ?? r.hotel_guestroom_count, 0) },
-      { label: 'Amenity SF', value: r => fmt(r.amenity_sqft, 0) },
-      { label: 'Core SF', value: r => fmt(r.core_sqft, 0) },
-      { label: 'Circulation SF', value: r => fmt(r.circulation_sqft, 0) },
-      { label: 'BOH / MEP SF', value: r => fmt(r.boh_mep_sqft, 0) },
-      { label: 'Parking SF', value: r => fmt(r.parking_sqft, 0) },
+      { label: 'Amenity SF', value: r => sf(r.amenity_sqft) },
+      { label: 'Core SF', value: r => sf(r.core_sqft) },
+      { label: 'Circulation SF', value: r => sf(r.circulation_sqft) },
+      { label: 'BOH / MEP SF', value: r => sf(r.boh_mep_sqft) },
+      { label: 'Parking SF', value: r => sf(r.parking_sqft) },
       { label: 'Efficiency', value: r => pct(r.efficiency_ratio) }
     ], state.reportData.levelSummary || [], 500);
   }
@@ -1579,7 +1826,7 @@ export function initializeApplication() {
     els.areaByCategoryPanel.innerHTML = tableHTML([
       { label: 'Area Category', text: true, value: r => escapeHTML(r.area_category || '') },
       { label: 'Count', value: r => fmt(r.count, 0) },
-      { label: 'Total SF', value: r => fmt(r.total_sqft, 0) },
+      { label: 'Total SF', value: r => sf(r.total_sqft) },
       { label: '% Gross SF', value: r => pct(r.pct_of_gross_sqft) }
     ], state.reportData.areaByCategory || [], 300);
   }
@@ -1589,7 +1836,7 @@ export function initializeApplication() {
       { label: 'Level Name', text: true, value: r => escapeHTML(r.level_name || '') },
       { label: 'View Name', text: true, value: r => escapeHTML(r.view_name || '') },
       { label: 'Area Name', text: true, value: r => escapeHTML(r.area_name || '') },
-      { label: 'Area SF', value: r => fmt(r.area_sqft, 0) },
+      { label: 'Area SF', value: r => sf(r.area_sqft) },
       { label: 'Area Category', text: true, value: r => escapeHTML(r.area_category || '') },
       { label: 'Area Type', text: true, value: r => escapeHTML(r.area_type || '') },
       { label: 'Notes', text: true, value: r => escapeHTML(r.notes || '') }
@@ -1601,7 +1848,7 @@ export function initializeApplication() {
       { label: 'Level Name', text: true, value: r => escapeHTML(r.level_name || '') },
       { label: 'View Name', text: true, value: r => escapeHTML(r.view_name || '') },
       { label: 'Area Name', text: true, value: r => escapeHTML(r.area_name || '') },
-      { label: 'Area SF', value: r => fmt(r.area_sqft, 0) },
+      { label: 'Area SF', value: r => sf(r.area_sqft) },
       { label: 'Area Category', text: true, value: r => escapeHTML(r.area_category || '') },
       { label: 'Area Type', text: true, value: r => escapeHTML(r.area_type || '') },
       { label: 'Group Name', text: true, value: r => escapeHTML(r.group_name || '') },
@@ -1613,7 +1860,7 @@ export function initializeApplication() {
   }
 
   function clearReportPanels(message = 'Import one combined Area Plan batch JSON file.') {
-    [els.summaryPanel, els.unitMixPanel, els.levelSummaryPanel, els.areaByCategoryPanel, els.excludedExteriorAreasPanel, els.areaRegisterPanel].forEach(panel => {
+    [els.projectInfoPanel, els.unitMixPanel].forEach(panel => {
       if (panel) panel.innerHTML = `<div class="small">${escapeHTML(message)}</div>`;
     });
   }
@@ -1624,13 +1871,8 @@ export function initializeApplication() {
       updateSummary();
       return;
     }
-    renderSummary();
-    updateSummary();
+    renderProjectInfo();
     renderUnitMix();
-    renderLevelSummaryReport();
-    renderAreaByCategoryReport();
-    renderExcludedExteriorAreasReport();
-    renderAreaRegisterReport();
   }
 
 
@@ -1652,25 +1894,36 @@ export function initializeApplication() {
       els.projectInfoPanel.innerHTML = '<div class="small">Import one combined Area Plan batch JSON file.</div>';
       return;
     }
-    const info = state.projectInfo || {};
     const summary = state.reportData?.summary || {};
-    const branded = categorySummaryMetric('BRANDED RESIDENTIAL');
-    const shortTerm = categorySummaryMetric('SHORT TERM RENTAL UNIT');
-    const hotelGuestroom = categorySummaryMetric('HOTEL GUESTROOM');
+    const floor = state.floors[state.activeIndex];
+    const towerMetricHTML = (label, gross, sellable, nonSellable) => {
+      const grossSqft = toNum(gross, 0);
+      const sellableSqft = toNum(sellable, 0);
+      const efficiency = grossSqft ? `${fmt((sellableSqft / grossSqft) * 100, 1)}%` : '--';
+      return `
+    <div class="metric-card tower-gross-card">
+      <div class="label">${escapeHTML(label)}</div>
+      <div class="value">${sf(gross)}</div>
+      <div class="tower-breakdown">
+        <div><span>Sellable / Leasable SF</span><strong>${sf(sellable)}</strong></div>
+        <div><span>Non-Sellable SF</span><strong>${sf(nonSellable)}</strong></div>
+        <div><span>Efficiency</span><strong>${efficiency}</strong></div>
+      </div>
+    </div>`;
+    };
     els.projectInfoPanel.innerHTML = `
-  <div class="metric-grid">
-    <div class="metric-card"><div class="label">Total Gross SF</div><div class="value">${fmt(summary.totalGrossSqft, 0)}</div></div>
-    <div class="metric-card"><div class="label">Sellable / Leasable SF</div><div class="value">${fmt(summary.totalSellableSqft, 0)}</div></div>
-    <div class="metric-card"><div class="label">Non-Sellable SF</div><div class="value">${fmt(summary.totalNonSellableSqft, 0)}</div></div>
-    <div class="metric-card"><div class="label">Efficiency</div><div class="value">${fmt((summary.efficiencyRatio || 0) * 100, 1)}%</div></div>
-    <div class="metric-card"><div class="label">Branded Residential</div><div class="value">${fmt(branded.count, 0)}</div></div>
-    <div class="metric-card"><div class="label">Branded Residential SF</div><div class="value">${fmt(branded.totalSqft, 0)}</div></div>
-    <div class="metric-card"><div class="label">Short Term Rental Unit</div><div class="value">${fmt(shortTerm.count, 0)}</div></div>
-    <div class="metric-card"><div class="label">Short Term Rental Unit SF</div><div class="value">${fmt(shortTerm.totalSqft, 0)}</div></div>
-    <div class="metric-card"><div class="label">Hotel Guestroom</div><div class="value">${fmt(hotelGuestroom.count, 0)}</div></div>
-    <div class="metric-card"><div class="label">Hotel Guestroom SF</div><div class="value">${fmt(hotelGuestroom.totalSqft, 0)}</div></div>
+  <h3>Gross SF</h3>
+  <div class="metric-grid gross-summary-grid" style="--gross-summary-split: ${grossSummarySplitPct()}%;">
+    <div class="gross-summary-editor-split" title="Drag to adjust Gross SF column split" aria-hidden="true"></div>
+    <div class="metric-card"><div class="label">Total Gross SF</div><div class="value">${sf(summary.totalGrossSqft)}</div></div>
+    <div class="metric-card"><div class="label">Building Efficiency</div><div class="value">${fmt((summary.efficiencyRatio || 0) * 100, 1)}%</div></div>
+    <div class="metric-card"><div class="label">Sellable / Leasable SF</div><div class="value">${sf(summary.totalSellableSqft)}</div></div>
+    <div class="metric-card"><div class="label">Non-Sellable SF</div><div class="value">${sf(summary.totalNonSellableSqft)}</div></div>
+    ${towerMetricHTML('Podium SF', summary.podiumGrossSqft, summary.podiumSellableSqft, summary.podiumNonSellableSqft)}
+    ${towerMetricHTML('North Tower SF', summary.northTowerGrossSqft, summary.northTowerSellableSqft, summary.northTowerNonSellableSqft)}
+    ${towerMetricHTML('South Tower SF', summary.southTowerGrossSqft, summary.southTowerSellableSqft, summary.southTowerNonSellableSqft)}
   </div>
-  <div class="report-note"><strong>Efficiency</strong> = Sellable / Leasable SF ÷ Total Gross SF.</div>
+  ${activeFloorCategoryTableHTML(floor)}
   `;
   }
 
@@ -1717,28 +1970,11 @@ export function initializeApplication() {
   }
 
   function setReportTabCheckboxes() {
-    const visibility = state.reportTabVisibility || DEFAULT_REPORT_TAB_VISIBILITY;
-    if (els.setTabProject) els.setTabProject.checked = visibility.project !== false;
-    if (els.setTabActiveFloor) els.setTabActiveFloor.checked = visibility.activeFloor !== false;
-    if (els.setTabUnitMix) els.setTabUnitMix.checked = visibility.unitMix !== false;
-    if (els.setTabLevelSummary) els.setTabLevelSummary.checked = visibility.levelSummary !== false;
-    if (els.setTabAreaByCategory) els.setTabAreaByCategory.checked = visibility.areaByCategory !== false;
-    if (els.setTabExcludedExteriorAreas) els.setTabExcludedExteriorAreas.checked = visibility.excludedExteriorAreas !== false;
-    if (els.setTabAreaRegister) els.setTabAreaRegister.checked = visibility.areaRegister !== false;
+    state.reportTabVisibility = { ...DEFAULT_REPORT_TAB_VISIBILITY };
   }
 
   function readReportTabVisibilityFromUI() {
-    const visibility = {
-      project: !!els.setTabProject?.checked,
-      activeFloor: !!els.setTabActiveFloor?.checked,
-      unitMix: !!els.setTabUnitMix?.checked,
-      levelSummary: !!els.setTabLevelSummary?.checked,
-      areaByCategory: !!els.setTabAreaByCategory?.checked,
-      excludedExteriorAreas: !!els.setTabExcludedExteriorAreas?.checked,
-      areaRegister: !!els.setTabAreaRegister?.checked
-    };
-    if (!Object.values(visibility).some(Boolean)) visibility.project = true;
-    return visibility;
+    return { ...DEFAULT_REPORT_TAB_VISIBILITY };
   }
 
   function populateSettingsUI() {
@@ -2174,6 +2410,48 @@ export function initializeApplication() {
     return !!editorState?.modeEnabled;
   }
 
+  const GROSS_SUMMARY_SPLIT_STORAGE_KEY = 'areaViewerGrossSummarySplitPct';
+  const DEFAULT_GROSS_SUMMARY_SPLIT_PCT = 50;
+
+  function grossSummarySplitPct() {
+    return clamp(toNum(localStorage.getItem(GROSS_SUMMARY_SPLIT_STORAGE_KEY), DEFAULT_GROSS_SUMMARY_SPLIT_PCT), 32, 68);
+  }
+
+  function setGrossSummarySplitPct(value, persist = true) {
+    const pct = clamp(toNum(value, DEFAULT_GROSS_SUMMARY_SPLIT_PCT), 32, 68);
+    document.querySelectorAll('.gross-summary-grid').forEach(grid => {
+      grid.style.setProperty('--gross-summary-split', `${pct}%`);
+    });
+    if (persist) localStorage.setItem(GROSS_SUMMARY_SPLIT_STORAGE_KEY, String(Math.round(pct * 10) / 10));
+    return pct;
+  }
+
+  function initGrossSummarySplitDrag(handle, event) {
+    if (!isEditorModeEnabled()) return;
+    const grid = handle.closest('.gross-summary-grid');
+    if (!grid) return;
+    const updateFromClientX = clientX => {
+      const rect = grid.getBoundingClientRect();
+      if (!rect.width) return;
+      setGrossSummarySplitPct(((clientX - rect.left) / rect.width) * 100);
+    };
+    updateFromClientX(event.clientX);
+    handle.setPointerCapture?.(event.pointerId);
+    handle.classList.add('dragging');
+    document.body.classList.add('gross-summary-split-dragging');
+    const onMove = moveEvent => updateFromClientX(moveEvent.clientX);
+    const onUp = upEvent => {
+      handle.releasePointerCapture?.(upEvent.pointerId);
+      handle.classList.remove('dragging');
+      document.body.classList.remove('gross-summary-split-dragging');
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+    event.preventDefault();
+  }
+
   function safeClone(value) {
     try { return structuredClone(value); } catch (_) { return JSON.parse(JSON.stringify(value ?? null)); }
   }
@@ -2385,6 +2663,7 @@ export function initializeApplication() {
     if (els.editorModeBtn) els.editorModeBtn.classList.toggle('active', editorState.modeEnabled);
     if (els.developerToolsBtn) els.developerToolsBtn.classList.toggle('editor-on', editorState.modeEnabled);
     if (els.editorToolbar) els.editorToolbar.hidden = !editorState.modeEnabled;
+    document.body.classList.toggle('editor-mode', editorState.modeEnabled);
     if (editorState.modeEnabled) {
       switchMode('2d');
       clearSelection(false);
@@ -4626,7 +4905,7 @@ export function initializeApplication() {
 
   function apply2DHighlight(layer) {
     if (!layer) return;
-    layer.setStyle(getHighlightStyle());
+    layer.setStyle({ ...getHighlightStyle(), color: '#111111' });
     layer.bringToFront();
   }
 
@@ -4697,6 +4976,18 @@ export function initializeApplication() {
     showSelectionInfoFloat(floor, area);
     updateSelectedInfo(floor, area);
     updateSummary();
+  }
+
+  function selectActiveFloorAreaByName(name) {
+    const floor = state.floors[state.activeIndex];
+    const target = normalizeReportKey(name);
+    if (!floor || !target) return;
+    const matches = (floor.areas || [])
+      .filter(area => !isExcludedFromReportCalculations(area) && normalizeReportKey(areaName(area)) === target)
+      .sort((a, b) => areaSqFt(b) - areaSqFt(a));
+    const area = matches[0];
+    if (!area) return;
+    select2DArea(floor, area, find2DLayerForArea(floor, area), null);
   }
 
   function clearSelection(resetInfo = true) {
@@ -4826,7 +5117,70 @@ export function initializeApplication() {
     return keys.size;
   }
 
+  function activeFloorCategoryTableHTML(floor) {
+    if (!floor) return '<div class="small">No active floor selected.</div>';
+    const byName = new Map();
+    for (const area of floor.areas || []) {
+      if (isExcludedFromReportCalculations(area)) continue;
+      const name = areaName(area);
+      const category = areaCategory(area);
+      if (!byName.has(name)) byName.set(name, { category, count: 0, sellableSqft: 0, nonSellableSqft: 0 });
+      const row = byName.get(name);
+      const sqft = areaSqFt(area);
+      const includeInSellable = inferIncludesFromCategory(category, 'sellable');
+      row.count += 1;
+      if (includeInSellable) row.sellableSqft += sqft;
+      else row.nonSellableSqft += sqft;
+    }
+    const names = [...byName.entries()].sort((a, b) =>
+      normalizeReportKey(a[1].category).localeCompare(normalizeReportKey(b[1].category)) ||
+      (b[1].sellableSqft + b[1].nonSellableSqft) - (a[1].sellableSqft + a[1].nonSellableSqft) ||
+      a[0].localeCompare(b[0])
+    );
+    const totalCount = names.reduce((sum, [, v]) => sum + toNum(v.count, 0), 0);
+    const totalSellableSqft = names.reduce((sum, [, v]) => sum + toNum(v.sellableSqft, 0), 0);
+    const totalNonSellableSqft = names.reduce((sum, [, v]) => sum + toNum(v.nonSellableSqft, 0), 0);
+    const activeFloorTotalSqft = totalSellableSqft + totalNonSellableSqft;
+    const activeFloorHeadingName = String(floor.levelName || floor.name || 'Active Floor').replace(/^[NS]\s*-\s*/i, '');
+    const activeFloorEfficiency = activeFloorTotalSqft ? `${fmt((totalSellableSqft / activeFloorTotalSqft) * 100, 1)}%` : '--';
+    const activeFloorHeading = `${activeFloorHeadingName} \u2022 ${sf(activeFloorTotalSqft)} \u2022 EFFICIENCY ${activeFloorEfficiency}`;
+    const selectedAreaNameKey = state.selected?.floor === floor && state.selected?.area
+      ? normalizeReportKey(areaName(state.selected.area))
+      : '';
+    const rows = names
+      .map(([name, v]) => `
+    <tr class="area-summary-row${normalizeReportKey(name) === selectedAreaNameKey ? ' selected' : ''}" data-area-name="${escapeHTML(name)}"${activeFloorRowHighlightStyle(v.category)}>
+      <td class="text">${escapeHTML(name)}</td>
+      <td class="center">${fmt(v.count, 0)}</td>
+      <td class="center">${sf(v.sellableSqft)}</td>
+      <td class="center">${sf(v.nonSellableSqft)}</td>
+    </tr>
+  `).join('');
+    const totalRow = names.length ? `
+    <tr class="group-total-row">
+      <td class="text">TOTAL:</td>
+      <td class="center">${fmt(totalCount, 0)}</td>
+      <td class="center">${sf(totalSellableSqft)}</td>
+      <td class="center">${sf(totalNonSellableSqft)}</td>
+    </tr>
+  ` : '';
+
+    return `
+  <h3>${escapeHTML(activeFloorHeading)}</h3>
+  <div class="table-wrap">
+    <table class="report-table active-floor-summary-table">
+      <thead><tr><th class="text">Name</th><th class="center">#</th><th class="center">Sellable / Leasable SF</th><th class="center">Non-Sellable SF</th></tr></thead>
+      <tbody>${rows ? rows + totalRow : '<tr><td class="text" colspan="4">No rows.</td></tr>'}</tbody>
+    </table>
+  </div>
+  `;
+  }
+
   function updateSummary() {
+    if (!els.floorSummary) {
+      renderProjectInfo();
+      return;
+    }
     const floor = state.floors[state.activeIndex];
     if (!state.floors.length) {
       els.floorSummary.innerHTML = '<div class="small">Import one combined Area Plan batch JSON file.</div>';
@@ -4844,7 +5198,7 @@ export function initializeApplication() {
     <tr>
       <td class="text">${escapeHTML(name)}</td>
       <td>${fmt(v.count, 0)}</td>
-      <td>${fmt(v.sqft, 0)}</td>
+      <td>${sf(v.sqft)}</td>
     </tr>
   `).join('');
 
@@ -5010,7 +5364,7 @@ export function initializeApplication() {
         return `
           <div class="floor-row ${isActive ? 'active' : ''}" data-selector-value="${escapeHTML(entry.value)}">
             <div class="name">${escapeHTML(entry.label)}</div>
-            <div class="floor-total">${fmt(totalArea, 0)} SF TOTAL</div>
+            <div class="floor-total">${fmt(totalArea, 0)} SF TOTAL:</div>
             <div class="height">${fmtFtIn(entry.group?.baseFloor?.heightFt)}–${fmtFtIn(entry.group?.topFloor?.heightFt)}</div>
             <div class="meta">Representative plan: ${escapeHTML(entry.floor?.levelName || entry.floor?.name || '')}</div>
           </div>`;
@@ -7017,7 +7371,7 @@ export function initializeApplication() {
   els.planZoomInBtn.addEventListener('click', () => {
     map.setZoom(map.getZoom() + 0.25, { animate: true });
   });
-  els.clearBtn.addEventListener('click', clearAll);
+  if (els.clearBtn) els.clearBtn.addEventListener('click', clearAll);
 
   document.addEventListener('click', e => {
     document.querySelectorAll('.pane-display-control[open]').forEach(menu => {
@@ -7030,6 +7384,18 @@ export function initializeApplication() {
     if (!btn) return;
     setSidebarTab(btn.dataset.tab);
   });
+  if (els.projectInfoPanel) {
+    els.projectInfoPanel.addEventListener('click', e => {
+      const row = e.target.closest('.active-floor-summary-table tr.area-summary-row');
+      if (!row) return;
+      selectActiveFloorAreaByName(row.dataset.areaName || '');
+    });
+    els.projectInfoPanel.addEventListener('pointerdown', e => {
+      const handle = e.target.closest('.gross-summary-editor-split');
+      if (!handle) return;
+      initGrossSummarySplitDrag(handle, e);
+    });
+  }
   els.settingsBtn.addEventListener('click', openSettingsModal);
   els.settingsCloseBtn.addEventListener('click', closeSettingsModal);
   els.settingsApplyBtn.addEventListener('click', applySettingsFromUI);
@@ -7308,6 +7674,60 @@ export function initializeApplication() {
       document.body.style.userSelect = '';
       map.invalidateSize(false);
       resize3D();
+    });
+  }
+
+  function initSidebarSplitResizer() {
+    const resizer = els.sidebarSplitResizer;
+    const sidebar = els.sidebar;
+    const reportPanel = sidebar?.querySelector(':scope > .report-panel');
+    if (!resizer || !sidebar || !reportPanel) return;
+
+    const applyHeight = height => {
+      const sidebarHeight = sidebar.getBoundingClientRect().height;
+      const minTop = 210;
+      const minBottom = 145;
+      const splitterHeight = resizer.getBoundingClientRect().height || 8;
+      const actionsEl = sidebar.querySelector('.sidebar-file-actions');
+      const actionsHeight = actionsEl && getComputedStyle(actionsEl).display !== 'none'
+        ? actionsEl.getBoundingClientRect().height
+        : 0;
+      const maxTop = Math.max(minTop, sidebarHeight - splitterHeight - actionsHeight - minBottom);
+      const next = clamp(height, minTop, maxTop);
+      reportPanel.style.flex = `0 0 ${next}px`;
+      return next;
+    };
+
+    const savedHeight = toNum(localStorage.getItem('areaViewerSidebarReportHeightPx'), 0);
+    if (savedHeight > 0) applyHeight(savedHeight);
+
+    let startY = 0;
+    let startHeight = 0;
+    let isResizing = false;
+
+    resizer.addEventListener('mousedown', e => {
+      isResizing = true;
+      startY = e.clientY;
+      startHeight = reportPanel.getBoundingClientRect().height;
+      resizer.classList.add('active');
+      document.body.style.cursor = 'row-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+
+    document.addEventListener('mousemove', e => {
+      if (!isResizing) return;
+      applyHeight(startHeight + (e.clientY - startY));
+    });
+
+    document.addEventListener('mouseup', () => {
+      if (!isResizing) return;
+      const next = reportPanel.getBoundingClientRect().height;
+      localStorage.setItem('areaViewerSidebarReportHeightPx', String(Math.round(next)));
+      isResizing = false;
+      resizer.classList.remove('active');
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
     });
   }
 }
