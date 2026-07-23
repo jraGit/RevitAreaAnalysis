@@ -1797,7 +1797,7 @@ export function initializeApplication() {
   function renderSummary() {
     if (!els.summaryPanel) return;
     if (!state.floors.length) {
-      els.summaryPanel.innerHTML = '<div class="small">Import one combined Area Plan batch JSON file.</div>';
+      els.summaryPanel.innerHTML = '<div class="small">Import one combined Area Plan JSON or NArch file.</div>';
       return;
     }
     const s = state.reportData.summary || {};
@@ -1889,7 +1889,7 @@ export function initializeApplication() {
     ], state.reportData.register || [], 500);
   }
 
-  function clearReportPanels(message = 'Import one combined Area Plan batch JSON file.') {
+  function clearReportPanels(message = 'Import one combined Area Plan JSON or NArch file.') {
     [els.projectInfoPanel, els.unitMixPanel].forEach(panel => {
       if (panel) panel.innerHTML = `<div class="small">${escapeHTML(message)}</div>`;
     });
@@ -1921,7 +1921,7 @@ export function initializeApplication() {
     updateSheetAnalysisTitle();
     if (!els.projectInfoPanel) return;
     if (!state.floors.length) {
-      els.projectInfoPanel.innerHTML = '<div class="small">Import one combined Area Plan batch JSON file.</div>';
+      els.projectInfoPanel.innerHTML = '<div class="small">Import one combined Area Plan JSON or NArch file.</div>';
       return;
     }
     const summary = state.reportData?.summary || {};
@@ -3674,7 +3674,7 @@ export function initializeApplication() {
   function sourceFileStem() {
     const original = String(editorState?.sourceFileName || state.projectInfo?.project_name || 'area-working');
     return original
-      .replace(/\.json$/i, '')
+      .replace(/\.(json|narch)$/i, '')
       .replace(/\.(viewerSaved|toRevitTransformer|workingV1\.edited|workingV1)$/i, '')
       .replace(/[^a-z0-9._-]+/gi, '-')
       .replace(/^-+|-+$/g, '') || 'area-working';
@@ -5252,7 +5252,7 @@ export function initializeApplication() {
     }
     const floor = state.floors[state.activeIndex];
     if (!state.floors.length) {
-      els.floorSummary.innerHTML = '<div class="small">Import one combined Area Plan batch JSON file.</div>';
+      els.floorSummary.innerHTML = '<div class="small">Import one combined Area Plan JSON or NArch file.</div>';
       return;
     }
 
@@ -5401,7 +5401,7 @@ export function initializeApplication() {
       opt.value = '';
       els.floorSelect.appendChild(opt);
       els.floorSelect.disabled = true;
-      els.floorList.innerHTML = 'No batch JSON loaded yet.';
+      els.floorList.innerHTML = 'No Area Plan JSON or NArch file loaded yet.';
       return;
     }
 

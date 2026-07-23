@@ -17,7 +17,7 @@
 <body class="no-file-loaded">
   <div class="app">
     <!-- File inputs remain available while the visual header is removed. -->
-    <input id="fileInput" type="file" accept=".json,.txt,application/json,text/plain" hidden />
+    <input id="fileInput" type="file" accept=".json,.NArch,.narch,.txt,application/json,text/plain" hidden />
     <input id="editorProjectInput" type="file" accept=".json,application/json" hidden />
 
 <!-- Main split viewer -->
@@ -59,7 +59,7 @@
           </div>
           <div id="stackPopup"></div>
         </div>
-        <div id="dropOverlay">Drop raw Revit JSON or Area_Viewer_Clean.json</div>
+        <div id="dropOverlay">Drop raw Revit JSON or area working .NArch file</div>
         <div id="zScaleControl" class="zscale-vertical" title="Visual vertical exaggeration. True level height is still read from JSON.">
           <button id="zScaleStepUpBtn" class="zscale-btn" type="button" title="Increase Z scale by 0.25x">+</button>
           <input id="zScale" type="range" min="1" max="8" value="1" step="0.25" />
@@ -192,12 +192,12 @@
 
         <div id="projectTabPanel" class="sidebar-tab-panel active">
           <div class="body" id="projectInfoPanel">
-            <div class="small">Import one combined Area Plan batch JSON file.</div>
+            <div class="small">Import one combined Area Plan JSON or NArch file.</div>
           </div>
         </div>
         <div id="unitMixTabPanel" class="sidebar-tab-panel">
           <div class="body" id="unitMixPanel">
-            <div class="small">Import one combined Area Plan batch JSON file.</div>
+            <div class="small">Import one combined Area Plan JSON or NArch file.</div>
           </div>
         </div>
       </div>

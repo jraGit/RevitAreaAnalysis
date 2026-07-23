@@ -14,7 +14,7 @@ export function createDataLoader({ applyLoadedJson, loadEditorProjectObject, app
     if (!files.length) return;
 
     if (files.length > 1) {
-      alert('This viewer accepts one combined batch JSON file only. Loading the first file: ' + files[0].name);
+      alert('This viewer accepts one combined batch JSON or NArch file only. Loading the first file: ' + files[0].name);
     }
 
     const file = files[0];
