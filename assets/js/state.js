@@ -21,6 +21,8 @@ export function createAppState() {
     labelBaseZoom: null,
     projectInfo: {},
     exportInfo: {},
+    sourceJson: null,
+    sourceFileName: '',
     propertyLineExport: {},
     reportData: {},
     areaGroups: [],

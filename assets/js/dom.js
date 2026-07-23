@@ -26,6 +26,7 @@ export function getDomElements() {
     projectInfoPanel: document.getElementById('projectInfoPanel'),
     styleLegend: document.getElementById('styleLegend'),
     reportTabs: document.getElementById('reportTabs'),
+    exportIconBtn: document.getElementById('exportIconBtn'),
     settingsBtn: document.getElementById('settingsBtn'),
     settingsModal: document.getElementById('settingsModal'),
     settingsCloseBtn: document.getElementById('settingsCloseBtn'),
@@ -121,7 +122,6 @@ export function getDomElements() {
 export function wirePresentationSheet() {
   const fileInput = document.getElementById('fileInput');
   const chooseFileBtn = document.getElementById('chooseFileBtn');
-  const exportIconBtn = document.getElementById('exportIconBtn');
   const loadedFileLabel = document.getElementById('loadedFileLabel');
   const floorSelect = document.getElementById('floorSelect');
   const levelNumberDisplay = document.getElementById('levelNumberDisplay');
@@ -130,17 +130,6 @@ export function wirePresentationSheet() {
 
   if (chooseFileBtn && fileInput) {
     chooseFileBtn.addEventListener('click', () => fileInput.click());
-  }
-
-  if (exportIconBtn) {
-    exportIconBtn.addEventListener('click', () => {
-      const a = document.createElement('a');
-      a.href = './dataRaw.program.xlsx';
-      a.download = 'dataRaw.program.xlsx';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-    });
   }
 
   if (fileInput && loadedFileLabel) {

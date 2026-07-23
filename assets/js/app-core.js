@@ -9,6 +9,7 @@ import {
 import { createAppState, createTwoDState, createThreeState } from './state.js';
 import { getDomElements } from './dom.js';
 import { createDataLoader } from './data-loader.js';
+import { downloadProgramExcel, hasProgramExcelPayload } from './program-excel-export.js';
 import {
   revitToLatLng,
   toNum,
@@ -797,6 +798,8 @@ export function initializeApplication() {
     clear3DWorld();
 
     if (isWorkingPackage(json)) freezeWorkingBaseline(json);
+    state.sourceJson = json;
+    state.sourceFileName = fileName || '';
     state.projectInfo = isWorkingPackage(json)
       ? (json.project?.project_information || {})
       : (json.project_information || json.metadata?.project_information || json.project || {});
@@ -857,6 +860,7 @@ export function initializeApplication() {
     if (els.loadedFileLabel) els.loadedFileLabel.innerHTML = `LOADED: <strong>${escapeHTML(fileName)}</strong>`;
     updateEditorPanel();
     showWorkingValidationReport(false);
+    updateProgramExportButton();
   }
 
   function normalizeFloorsFromJSON(json, fileName) {
@@ -1573,6 +1577,8 @@ export function initializeApplication() {
       sellable_sqft: 0,
       non_sellable_sqft: 0,
       residential_unit_count: 0,
+      branded_residential_units: 0,
+      short_term_rental_units: 0,
       hotel_guestroom_count: 0,
       amenity_sqft: 0,
       core_sqft: 0,
@@ -1582,11 +1588,15 @@ export function initializeApplication() {
       efficiency_ratio: 0
     }), (acc, r) => {
       const sqft = toNum(r.area_sqft, 0);
-      const cat = String(r.area_category || '').toUpperCase();
+      const cat = normalizeReportKey(r.area_category);
       if (r.include_in_gross) acc.gross_sqft += sqft;
       if (r.include_in_sellable) acc.sellable_sqft += sqft;
-      if (r.include_in_unit_mix) acc.residential_unit_count += 1;
-      if (cat.includes('HOTEL')) acc.hotel_guestroom_count += 1;
+      if (r.include_in_unit_mix) {
+        acc.residential_unit_count += 1;
+        if (cat === 'BRANDED RESIDENTIAL') acc.branded_residential_units += 1;
+        if (cat === 'SHORT TERM RENTAL (STR)') acc.short_term_rental_units += 1;
+        if (cat === 'HOTEL') acc.hotel_guestroom_count += 1;
+      }
       if (cat.includes('AMENIT')) acc.amenity_sqft += sqft;
       if (cat.includes('CORE')) acc.core_sqft += sqft;
       if (cat.includes('CIRCULATION')) acc.circulation_sqft += sqft;
@@ -1630,6 +1640,22 @@ export function initializeApplication() {
     return totals;
   }
 
+  function buildUnitCategoryCounts(rows) {
+    const totals = {
+      brandedResidentialUnits: 0,
+      shortTermRentalUnits: 0,
+      hotelGuestrooms: 0
+    };
+    for (const row of rows || []) {
+      if (!row.include_in_unit_mix) continue;
+      const category = normalizeReportKey(row.area_category);
+      if (category === 'BRANDED RESIDENTIAL') totals.brandedResidentialUnits += 1;
+      if (category === 'SHORT TERM RENTAL (STR)') totals.shortTermRentalUnits += 1;
+      if (category === 'HOTEL') totals.hotelGuestrooms += 1;
+    }
+    return totals;
+  }
+
   function buildReportData(json, floors) {
     const summary = json.summary || {};
     const register = (Array.isArray(json.area_register) ? json.area_register : buildRegisterFromFloors(floors))
@@ -1639,6 +1665,7 @@ export function initializeApplication() {
     const sellable = register.filter(r => r.include_in_sellable).reduce((sum, r) => sum + toNum(r.area_sqft, 0), 0);
     const towerSummary = buildTowerSummary(register);
     const unitCount = register.filter(r => r.include_in_unit_mix).length;
+    const unitCategoryCounts = buildUnitCategoryCounts(register);
     const areaByCategory = buildAreaByCategory(register, gross);
     const levelSummary = buildLevelSummary(register, floors);
     const unitMix = buildUnitMix(register);
@@ -1661,6 +1688,9 @@ export function initializeApplication() {
         efficiencyRatio: gross ? sellable / gross : 0,
         areaCount: register.length,
         unitCount,
+        brandedResidentialUnits: unitCategoryCounts.brandedResidentialUnits,
+        shortTermRentalUnits: unitCategoryCounts.shortTermRentalUnits,
+        hotelGuestrooms: unitCategoryCounts.hotelGuestrooms,
         excludedExteriorAreaCount: 0,
         excludedExteriorAreaSqft: 0,
         areaTypeRule: summary.area_type_rule || '',
@@ -1922,6 +1952,14 @@ export function initializeApplication() {
     ${towerMetricHTML('Podium SF', summary.podiumGrossSqft, summary.podiumSellableSqft, summary.podiumNonSellableSqft)}
     ${towerMetricHTML('North Tower SF', summary.northTowerGrossSqft, summary.northTowerSellableSqft, summary.northTowerNonSellableSqft)}
     ${towerMetricHTML('South Tower SF', summary.southTowerGrossSqft, summary.southTowerSellableSqft, summary.southTowerNonSellableSqft)}
+    <div class="unit-total-strip">
+      <div class="label">Unit Totals</div>
+      <div class="unit-total-items">
+        <div><span>Branded Residential</span><strong>${fmt(summary.brandedResidentialUnits, 0)}</strong></div>
+        <div><span>Short Term Rental (STR)</span><strong>${fmt(summary.shortTermRentalUnits, 0)}</strong></div>
+        <div><span>Hotel Guestrooms</span><strong>${fmt(summary.hotelGuestrooms, 0)}</strong></div>
+      </div>
+    </div>
   </div>
   ${activeFloorCategoryTableHTML(floor)}
   `;
@@ -4038,6 +4076,8 @@ export function initializeApplication() {
     map.closePopup();
     clearSelection(true);
     clear3DWorld();
+    state.sourceJson = sourceJson;
+    state.sourceFileName = project.source?.source_file_name || fileName || '';
     state.projectInfo = sourceJson.project_information || sourceJson.metadata?.project_information || sourceJson.project || project.project_information || {};
     state.exportInfo = sourceJson.export_info || sourceJson.metadata || sourceJson.source || project.source || {};
     state.propertyLineExport = sourceJson.property_line_export || {};
@@ -4074,6 +4114,7 @@ export function initializeApplication() {
     editorState.dirty = false;
     if (els.loadedFileLabel) els.loadedFileLabel.innerHTML = `LOADED: <strong>${escapeHTML(project.source?.source_file_name || fileName)}</strong>`;
     updateEditorPanel();
+    updateProgramExportButton();
   }
 
   function downloadJson(obj, fileName) {
@@ -4086,6 +4127,34 @@ export function initializeApplication() {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function updateProgramExportButton(isExporting = false) {
+    if (!els.exportIconBtn) return;
+    const available = hasProgramExcelPayload(state.sourceJson);
+    els.exportIconBtn.hidden = !available;
+    els.exportIconBtn.disabled = !available || isExporting;
+    els.exportIconBtn.setAttribute('aria-disabled', String(!available || isExporting));
+    els.exportIconBtn.title = available
+      ? (isExporting ? 'Building program Excel workbook...' : 'Export program Excel workbook')
+      : 'Program Excel export is unavailable for this JSON';
+  }
+
+  async function exportProgramExcelFromLoadedJson() {
+    if (!hasProgramExcelPayload(state.sourceJson)) {
+      alert('This loaded JSON does not include a program block for Excel export.');
+      updateProgramExportButton(false);
+      return;
+    }
+    updateProgramExportButton(true);
+    try {
+      await downloadProgramExcel(state.sourceJson, state.sourceFileName || editorState?.sourceFileName || '');
+    } catch (error) {
+      console.error('Program Excel export failed.', error);
+      alert(`Program Excel export failed:\n\n${error?.message || error}`);
+    } finally {
+      updateProgramExportButton(false);
+    }
   }
 
   function resolveAreaPlacementPoint(area) {
@@ -7543,6 +7612,10 @@ export function initializeApplication() {
   if (els.zScaleStepUpBtn) els.zScaleStepUpBtn.addEventListener('click', () => setZScaleValue(toNum(els.zScale.value, 1) + 0.25));
   if (els.zScaleStepDownBtn) els.zScaleStepDownBtn.addEventListener('click', () => setZScaleValue(toNum(els.zScale.value, 1) - 0.25));
   if (els.zScaleResetBtn) els.zScaleResetBtn.addEventListener('click', () => setZScaleValue(1));
+  if (els.exportIconBtn) {
+    els.exportIconBtn.addEventListener('click', exportProgramExcelFromLoadedJson);
+    updateProgramExportButton(false);
+  }
 
   els.floorList.addEventListener('click', e => {
     const row = e.target.closest('[data-selector-value]');

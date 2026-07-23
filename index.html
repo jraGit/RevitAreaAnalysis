@@ -48,6 +48,9 @@
         <div id="stack3d">
           <div id="label3dLayer"></div>
           <div id="stackHud" aria-label="3D mouse navigation controls">
+            <button class="mouse-nav-button" type="button" aria-label="Show 3D mouse controls" title="3D mouse controls">
+              <span class="mouse-nav-icon" aria-hidden="true"></span>
+            </button>
             <div class="mouse-nav-hint">
               <div class="mouse-nav-row"><strong>Left Click + Drag:</strong> Orbit</div>
               <div class="mouse-nav-row"><strong>Middle Click + Drag:</strong> Pan</div>
@@ -73,9 +76,11 @@
           </div>
         </div>
         <div class="pane-controls pane-controls-3d" aria-label="3D view controls">
-          <button id="zoom3dOutBtn" type="button" title="Zoom out 3D view" aria-label="Zoom out 3D view">−</button>
-          <button id="fitBtn" type="button" title="Fit 3D view">⊞ Fit</button>
-          <button id="zoom3dInBtn" type="button" title="Zoom in 3D view" aria-label="Zoom in 3D view">+</button>
+          <div class="pane-zoom-group" role="group" aria-label="3D zoom controls">
+            <button id="zoom3dOutBtn" type="button" title="Zoom out 3D view" aria-label="Zoom out 3D view">−</button>
+            <button id="fitBtn" type="button" title="Fit 3D view">⊞ Fit</button>
+            <button id="zoom3dInBtn" type="button" title="Zoom in 3D view" aria-label="Zoom in 3D view">+</button>
+          </div>
           <details id="displayOptions3d" class="pane-display-control">
             <summary>Display ▾</summary>
             <div class="control-dropdown-menu">
@@ -146,9 +151,11 @@
               </div>
             </div>
           </details>
-          <button id="planZoomOutBtn" type="button" title="Zoom out floor plan">−</button>
-          <button id="planFitBtn" type="button" title="Fit floor plan">⊞ Fit</button>
-          <button id="planZoomInBtn" type="button" title="Zoom in floor plan">+</button>
+          <div class="pane-zoom-group" role="group" aria-label="Floor plan zoom controls">
+            <button id="planZoomOutBtn" type="button" title="Zoom out floor plan">−</button>
+            <button id="planFitBtn" type="button" title="Fit floor plan">⊞ Fit</button>
+            <button id="planZoomInBtn" type="button" title="Zoom in floor plan">+</button>
+          </div>
         </div>
         <div id="selectionInfoFloat" class="selection-info-float" hidden aria-live="polite"></div>
       </div>
@@ -175,7 +182,7 @@
           <label for="floorSelect">Active Level</label>
           <select id="floorSelect" title="Loaded Revit levels"></select>
           <button id="chooseFileBtn" type="button" class="sidebar-icon-btn" title="Open area analysis file" aria-label="Open area analysis file"><span class="open-file-icon" aria-hidden="true"></span></button>
-          <button id="exportIconBtn" type="button" class="sidebar-icon-btn" title="Download program Excel file" aria-label="Download program Excel file"><span class="export-file-icon" aria-hidden="true"></span></button>
+          <button id="exportIconBtn" type="button" class="sidebar-icon-btn" title="Program Excel export is unavailable for this JSON" aria-label="Export program Excel workbook" disabled hidden><span class="export-file-icon" aria-hidden="true"></span></button>
           <button id="settingsBtn" type="button" class="sidebar-icon-btn" title="Viewer settings" aria-label="Viewer settings">⚙</button>
         </div>
         <div class="sidebar-tabs" id="reportTabs">
