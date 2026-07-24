@@ -1148,9 +1148,10 @@
     .label3d.floorLabel {
       font-size: 12px;
       font-weight: 700;
-      color: #000066;
-      background: rgba(255, 255, 255, 0.84);
-      border: 1px solid rgba(0, 0, 255, 0.25);
+      color: #111111;
+      background: rgba(255, 255, 255, 0.88);
+      border: 1px solid rgba(17, 17, 17, 0.45);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.10);
     }
 
     .label3d.typicalGroupLabel {

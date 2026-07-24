@@ -1,6 +1,5 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import {
-  REVIT_BLUE,
   DEFAULT_GROUP_PALETTE,
   DEFAULT_AREA_GROUP_COLORS,
   DEFAULT_REPORT_TAB_VISIBILITY,
@@ -33,6 +32,8 @@ export function initializeApplication() {
   'use strict';
 
   let editorState = null;
+  const EDITOR_MODE_PASSWORD = '161';
+  let editorModeUnlocked = false;
 
   const state = createAppState();
   const twoDState = createTwoDState();
@@ -227,6 +228,8 @@ export function initializeApplication() {
     threeState.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
     threeState.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     threeState.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    threeState.renderer.shadowMap.enabled = true;
+    threeState.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     els.stack3d.prepend(threeState.renderer.domElement);
     threeState.renderer.domElement.style.position = 'absolute';
     threeState.renderer.domElement.style.inset = '0';
@@ -239,11 +242,27 @@ export function initializeApplication() {
     threeState.worldGroup = new THREE.Group();
     threeState.scene.add(threeState.worldGroup);
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.88);
+    // Soft sky/ground gradient fill gives faces a gentle ambient-occlusion-like
+    // falloff (upward faces read lighter, downward/side faces read cooler)
+    // without needing a full AO pass.
+    const hemi = new THREE.HemisphereLight(0xffffff, 0xcfd3da, 0.55);
+    threeState.scene.add(hemi);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
     threeState.scene.add(ambient);
+
+    // Key light casts soft contact shadows between stacked Area slabs and
+    // massing volumes so the stack reads with real depth. Frustum is resized
+    // to the model bounds in configureShadowsForBounds() after each load.
     const dir1 = new THREE.DirectionalLight(0xffffff, 0.55);
     dir1.position.set(140, 280, 180);
+    dir1.castShadow = true;
+    dir1.shadow.mapSize.set(2048, 2048);
+    dir1.shadow.bias = -0.0015;
+    dir1.shadow.radius = 4;
     threeState.scene.add(dir1);
+    threeState.scene.add(dir1.target);
+    threeState.dirLight = dir1;
+
     const dir2 = new THREE.DirectionalLight(0xffffff, 0.22);
     dir2.position.set(-220, 120, -180);
     threeState.scene.add(dir2);
@@ -2078,7 +2097,7 @@ export function initializeApplication() {
   }
 
   function resetVisualSettings() {
-    state.styleSettings.areaLineColor = REVIT_BLUE;
+    state.styleSettings.areaLineColor = '#000000';
     state.styleSettings.boundaryLineColor = '#000000';
     state.styleSettings.propertyLineColor = '#ff0000';
     state.styleSettings.propertyLineOpacity = 1;
@@ -2696,7 +2715,17 @@ export function initializeApplication() {
 
   function setEditorMode(enabled) {
     if (!editorState) return;
-    editorState.modeEnabled = !!enabled;
+    const wantsEnable = !!enabled;
+    if (wantsEnable && !editorState.modeEnabled && !editorModeUnlocked) {
+      const input = window.prompt('Enter password to enable Editor Mode:');
+      if (input === null) return;
+      if (input !== EDITOR_MODE_PASSWORD) {
+        window.alert('Incorrect password.');
+        return;
+      }
+      editorModeUnlocked = true;
+    }
+    editorState.modeEnabled = wantsEnable;
     if (els.editorModeToggle) els.editorModeToggle.checked = editorState.modeEnabled;
     if (els.editorModeBtn) els.editorModeBtn.classList.toggle('active', editorState.modeEnabled);
     if (els.developerToolsBtn) els.developerToolsBtn.classList.toggle('editor-on', editorState.modeEnabled);
@@ -6149,8 +6178,7 @@ export function initializeApplication() {
       if (!shape) continue;
 
       const style = getAreaStyle(area, '3d');
-      const geom = new THREE.ShapeGeometry(shape);
-      geom.rotateX(-Math.PI / 2);
+      const geom = makeAreaSlabGeometry(shape);
       const areaOpacity = clampOpacity(style.fillOpacity ?? 1, 1);
       const mat = new THREE.MeshLambertMaterial({
         color: new THREE.Color(style.fillColor),
@@ -6163,6 +6191,8 @@ export function initializeApplication() {
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.y = renderY;
       mesh.renderOrder = 12;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       mesh.userData = {
         floor,
         area,
@@ -6247,6 +6277,8 @@ export function initializeApplication() {
     });
     const mesh = new THREE.Mesh(geom, mat);
     mesh.renderOrder = 2;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     mesh.userData = { kind: 'typicalFloorVolume', group, baseOpacity: volumeOpacity };
     typicalGroup.add(mesh);
     threeState.typicalGroupMeshes.push(mesh);
@@ -6360,6 +6392,7 @@ export function initializeApplication() {
     }
 
     threeState.bounds = compute3DBounds();
+    configureShadowsForBounds(threeState.bounds);
 
     // Establish the permanent default orbit base point from the complete
     // rendered 3D dataset. This is a viewer-only reference and is deliberately
@@ -6400,8 +6433,7 @@ export function initializeApplication() {
       const shape = makeShapeFromArea(area);
       if (!shape) continue;
       const style = getAreaStyle(area, '3d');
-      const geom = new THREE.ShapeGeometry(shape);
-      geom.rotateX(-Math.PI / 2);
+      const geom = makeAreaSlabGeometry(shape);
       const areaOpacity = clampOpacity(style.fillOpacity ?? 1, 1);
       const mat = new THREE.MeshLambertMaterial({
         color: new THREE.Color(style.fillColor),
@@ -6413,6 +6445,8 @@ export function initializeApplication() {
       const mesh = new THREE.Mesh(geom, mat);
       mesh.position.y = floor.y3D;
       mesh.renderOrder = 10;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       mesh.userData = {
         floor,
         area,
@@ -6527,6 +6561,8 @@ export function initializeApplication() {
       });
       const mesh = new THREE.Mesh(geom, mat);
       mesh.renderOrder = 26;
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
       mesh.userData = { floor, column, kind: 'column', baseOpacity: columnOpacity };
 
       const edgeGeom = new THREE.EdgesGeometry(geom);
@@ -6639,6 +6675,8 @@ export function initializeApplication() {
         });
         const mesh = new THREE.Mesh(geom, mat);
         mesh.renderOrder = 30;
+        mesh.castShadow = true;
+        mesh.receiveShadow = true;
         mesh.userData = { floor, wall, kind: 'wall', baseOpacity: wallOpacity };
 
         const edgeGeom = new THREE.EdgesGeometry(geom);
@@ -6726,6 +6764,22 @@ export function initializeApplication() {
       if (holePts.length >= 3) shape.holes.push(new THREE.Path(holePts));
     }
     return shape;
+  }
+
+  // Real 12" (1 ft) slab thickness for every rendered Area Plane, scaled with
+  // the same visual Z exaggeration as floor-to-floor heights so it stays
+  // proportionate when zScale changes. The slab hangs below the Area's plan
+  // elevation so the top face keeps sitting exactly at the floor's y3D.
+  function areaSlabThicknessFt() {
+    return 1 * state.zScale;
+  }
+
+  function makeAreaSlabGeometry(shape) {
+    const thickness = areaSlabThicknessFt();
+    const geom = new THREE.ExtrudeGeometry(shape, { depth: thickness, bevelEnabled: false, curveSegments: 8 });
+    geom.translate(0, 0, -thickness);
+    geom.rotateX(-Math.PI / 2);
+    return geom;
   }
 
   function cleanLoop(loop) {
@@ -6854,6 +6908,28 @@ export function initializeApplication() {
       min: new THREE.Vector3(Math.min(...xs), Math.min(...ys), Math.min(...zs)),
       max: new THREE.Vector3(Math.max(...xs), Math.max(...ys), Math.max(...zs))
     };
+  }
+
+  function configureShadowsForBounds(bounds) {
+    const light = threeState.dirLight;
+    if (!light || !bounds) return;
+    const center = new THREE.Vector3().addVectors(bounds.min, bounds.max).multiplyScalar(0.5);
+    const size = new THREE.Vector3().subVectors(bounds.max, bounds.min);
+    const radius = Math.max(size.length() * 0.6, 50);
+
+    const offset = new THREE.Vector3(140, 280, 180).normalize().multiplyScalar(radius * 1.6);
+    light.position.copy(center).add(offset);
+    light.target.position.copy(center);
+    light.target.updateMatrixWorld();
+
+    const cam = light.shadow.camera;
+    cam.left = -radius;
+    cam.right = radius;
+    cam.top = radius;
+    cam.bottom = -radius;
+    cam.near = radius * 0.1;
+    cam.far = radius * 4;
+    cam.updateProjectionMatrix();
   }
 
   function add3DGridAndAxes() {

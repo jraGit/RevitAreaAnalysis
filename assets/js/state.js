@@ -1,4 +1,4 @@
-import { DEFAULT_REPORT_TAB_VISIBILITY, REVIT_BLUE } from './config.js';
+import { DEFAULT_REPORT_TAB_VISIBILITY } from './config.js';
 
 // Factories preserve the original shared mutable object shapes.
 export function createAppState() {
@@ -30,7 +30,7 @@ export function createAppState() {
     typicalFloorGroupingEnabled: true,
     importedAreaColorMap: {},
     styleSettings: {
-      areaLineColor: REVIT_BLUE,
+      areaLineColor: '#000000',
       boundaryLineColor: '#000000',
       propertyLineColor: '#ff0000',
       propertyLineOpacity: 1,
