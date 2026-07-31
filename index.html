@@ -36,13 +36,6 @@
         <button id="editorExportTransformerBtn" type="button" class="primary" title="Approve drafts and export to the second transformer">Export</button>
         <span id="editorToolbarStatus" class="editor-toolbar-status">Editor ready</span>
       </div>
-      <div id="emptyFileState" class="empty-file-state" aria-label="No file loaded">
-        <div class="empty-file-card">
-          <div class="empty-file-title">No area analysis file loaded</div>
-          <button id="emptyChooseFileBtn" class="empty-file-choose" type="button">Choose File</button>
-        </div>
-      </div>
-
       <!-- 3D pane -->
       <div id="pane3d">
         <div id="stack3d">
@@ -132,6 +125,13 @@
 
       <!-- 2D pane -->
       <div id="pane2d">
+        <div id="emptyFileState" class="empty-file-state" aria-label="No file loaded">
+          <div class="empty-file-card">
+            <div class="empty-file-title">No area analysis file loaded</div>
+            <button id="emptyChooseFileBtn" class="empty-file-choose" type="button">Choose File</button>
+            <button id="emptyLoadSampleBtn" class="empty-file-choose" type="button"><span class="empty-file-choose-unbold">Load</span> Block C</button>
+          </div>
+        </div>
         <div id="map"></div>
         <div class="pane-controls pane-controls-2d" aria-label="Floor plan controls">
           <details id="displayOptions2d" class="pane-display-control">

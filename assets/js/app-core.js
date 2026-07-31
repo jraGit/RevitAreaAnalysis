@@ -7603,6 +7603,20 @@ export function initializeApplication() {
   }
 
   els.fileInput.addEventListener('change', e => loadFiles(e.target.files));
+  const emptyLoadSampleBtn = document.getElementById('emptyLoadSampleBtn');
+  if (emptyLoadSampleBtn) {
+    emptyLoadSampleBtn.addEventListener('click', async () => {
+      try {
+        const response = await fetch('./blockC.NArch');
+        if (!response.ok) throw new Error(`Could not fetch sample file (${response.status})`);
+        const text = await response.text();
+        const file = new File([text], 'blockC.NArch', { type: 'application/json' });
+        loadFiles([file]);
+      } catch (err) {
+        alert(`Could not load the Block C sample file:\n\n${err.message}`);
+      }
+    });
+  }
   els.mode2dBtn.addEventListener('click', () => switchMode('2d'));
   els.mode3dBtn.addEventListener('click', () => switchMode('3d'));
   els.floorSelect.addEventListener('change', e => handleFloorSelectorChange(e.target.value));
