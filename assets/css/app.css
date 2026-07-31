@@ -3200,9 +3200,6 @@
 
 
     /* ── Redline update 05: clean empty/no-file state ─────────────── */
-    body.no-file-loaded #pane3d,
-    body.no-file-loaded #pane2d,
-    body.no-file-loaded #paneResizer,
     body.no-file-loaded #editorSelectionBox,
     body.no-file-loaded #editorPanel {
       display: none !important;
@@ -3226,12 +3223,37 @@
       display: none;
       align-items: center;
       justify-content: center;
-      background: #ffffff;
+      background: transparent;
       pointer-events: all;
     }
 
     body.no-file-loaded .empty-file-state {
       display: flex;
+    }
+
+    body.no-file-loaded::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: 1800;
+      background: rgba(255, 255, 255, 0.72);
+      pointer-events: none;
+    }
+
+    /* Redline update: divider lines stay dimmed black at rest, blue on hover, while no file is loaded. */
+    body.no-file-loaded #paneResizer:hover::after,
+    body.no-file-loaded #paneResizer.active::after {
+      background: rgb(36, 103, 193);
+    }
+
+    body.no-file-loaded #sidebarResizer:hover::after,
+    body.no-file-loaded #sidebarResizer.active::after {
+      background: rgb(36, 103, 193);
+    }
+
+    body.no-file-loaded .sidebar-split-resizer:hover::after,
+    body.no-file-loaded .sidebar-split-resizer.active::after {
+      background: rgb(36, 103, 193);
     }
 
     .empty-file-card {
@@ -4070,7 +4092,7 @@
 
     .sidebar-split-resizer:hover,
     .sidebar-split-resizer.active {
-      background: rgba(13, 71, 255, 0.08);
+      background: #0d47ff;
     }
 
     .sidebar-split-resizer:hover::after,

@@ -14,7 +14,7 @@ export function createAppState() {
     propertyLinesVisible: true,
     wallsVisible: true,
     columnsVisible: true,
-    display3d: { labels: true, boundaries: true, lines: true, propertyLines: true, walls: false, columns: false, areaTransparency: 0, lineTransparency: 0, typicalLineTransparency: 0.90, areaBoundaryTransparency: 0.15, propertyLineTransparency: 0, wallTransparency: 0.10, columnTransparency: 0.85 },
+    display3d: { labels: true, boundaries: true, lines: true, propertyLines: true, walls: false, columns: false, massing: true, areaTransparency: 0, lineTransparency: 0, typicalLineTransparency: 0.90, areaBoundaryTransparency: 0.15, propertyLineTransparency: 0, wallTransparency: 0.10, columnTransparency: 0.85 },
     display2d: { labels: true, boundaries: true, propertyLines: true, walls: true, columns: true, areaTransparency: 0, propertyLineTransparency: 0, wallTransparency: 0, columnTransparency: 0.5 },
     zScale: 1,
     reportTabVisibility: { ...DEFAULT_REPORT_TAB_VISIBILITY },

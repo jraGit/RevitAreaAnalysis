@@ -6,78 +6,295 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Revit Area Development Viewer</title>
 
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jsts@2.11.3/dist/jsts.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;500;600;700&family=Urbanist:wght@300;400;500&display=swap" />
   <link rel="stylesheet" href="./assets/css/app.css" />
 </head>
 
-<body class="splash-page">
-  <main class="splash-shell" aria-label="Revit Area Development Viewer start page">
-    <header class="splash-header">
-      <div class="splash-header-left">
-        <div class="splash-title-accent" aria-hidden="true"></div>
-        <div class="splash-title-block">
-          <h1>Revit Area Development Viewer</h1>
-          <p>Area analysis review, floor plan inspection, and 3D stack visualization.</p>
+<body class="no-file-loaded">
+  <div class="app">
+    <!-- File inputs remain available while the visual header is removed. -->
+    <input id="fileInput" type="file" accept=".json,.NArch,.narch,.txt,application/json,text/plain" hidden />
+    <input id="editorProjectInput" type="file" accept=".json,application/json" hidden />
+
+<!-- Main split viewer -->
+    <div id="viewerWrap">
+      <div id="editorToolbar" class="editor-toolbar" hidden aria-label="Area Boundary editor tools">
+        <button id="editorSelectToolBtn" type="button" data-editor-tool="select" title="Select Areas or Area Boundary Lines">Select</button>
+        <button id="editorLineToolBtn" type="button" data-editor-tool="line" title="Create one straight Area Boundary Line">Line</button>
+        <button id="editorRectangleToolBtn" type="button" data-editor-tool="rectangle" title="Create four straight Area Boundary Lines">Rectangle</button>
+        <button id="editorCircleToolBtn" type="button" data-editor-tool="circle" title="Create a circle as 24 straight Area Boundary Lines">Circle</button>
+        <button id="editorMoveToolBtn" type="button" data-editor-tool="move" title="Drag selected line endpoints or its center handle">Move</button>
+        <span class="editor-toolbar-separator"></span>
+        <button id="editorDeleteBtn" type="button" class="danger" title="Delete selected Areas or Area Boundary Lines">Delete</button>
+        <button id="editorUndoDeleteBtn" type="button" title="Revert the most recent applied viewer changeset">Undo</button>
+        <span class="editor-toolbar-separator"></span>
+        <button id="editorSaveJsonBtn" type="button" title="Save editable working JSON">Save JSON</button>
+        <button id="editorExportTransformerBtn" type="button" class="primary" title="Approve drafts and export to the second transformer">Export</button>
+        <span id="editorToolbarStatus" class="editor-toolbar-status">Editor ready</span>
+      </div>
+      <div id="emptyFileState" class="empty-file-state" aria-label="No file loaded">
+        <div class="empty-file-card">
+          <div class="empty-file-title">No area analysis file loaded</div>
+          <button id="emptyChooseFileBtn" class="empty-file-choose" type="button">Choose File</button>
         </div>
       </div>
-      <div class="splash-mark" aria-label="Nichols Architects">Nichols Architects</div>
-    </header>
 
-    <section class="splash-content">
-      <div class="splash-video-panel" aria-label="Instructional video">
-        <div class="splash-panel-label">Instructions</div>
-        <div class="splash-video-frame">
-          <video id="instructionVideo" class="splash-video" controls preload="metadata">
-            <source src="./instructions.mp4" type="video/mp4" />
-            Your browser does not support the instructional video.
-          </video>
-          <button id="instructionPlayBtn" class="splash-video-play" type="button" aria-label="Play instructional video">
-            <span aria-hidden="true"></span>
-          </button>
+      <!-- 3D pane -->
+      <div id="pane3d">
+        <div id="stack3d">
+          <div id="label3dLayer"></div>
+          <div id="stackHud" aria-label="3D mouse navigation controls">
+            <button class="mouse-nav-button" type="button" aria-label="Show 3D mouse controls" title="3D mouse controls">
+              <span class="mouse-nav-icon" aria-hidden="true"></span>
+            </button>
+            <div class="mouse-nav-hint">
+              <div class="mouse-nav-row"><strong>Left Click + Drag:</strong> Orbit</div>
+              <div class="mouse-nav-row"><strong>Middle Click + Drag:</strong> Pan</div>
+              <div class="mouse-nav-row"><strong>Wheel:</strong> Zoom</div>
+            </div>
+          </div>
+          <div id="stackPopup"></div>
+        </div>
+        <div id="dropOverlay">Drop raw Revit JSON or area working .NArch file</div>
+        <div id="zScaleControl" class="zscale-vertical" title="Visual vertical exaggeration. True level height is still read from JSON.">
+          <button id="zScaleStepUpBtn" class="zscale-btn" type="button" title="Increase Z scale by 0.25x">+</button>
+          <input id="zScale" type="range" min="1" max="8" value="1" step="0.25" />
+          <button id="zScaleResetBtn" class="zscale-reset" type="button" title="Reset Z scale to 1x"><span id="zScaleValue">1x</span></button>
+          <button id="zScaleStepDownBtn" class="zscale-btn" type="button" title="Decrease Z scale by 0.25x">−</button>
+          <div class="zscale-view-divider" aria-hidden="true"></div>
+          <div class="zscale-view-buttons" aria-label="3D camera views">
+            <button id="topBtn" class="zscale-view-btn" type="button" title="Top view" aria-label="Top view">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="4.5" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M8 8h8v8H8z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+            </button>
+            <button id="isoBtn" class="zscale-view-btn" type="button" title="Isometric view" aria-label="Isometric view">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5 20 8v8l-8 4.5L4 16V8l8-4.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="m4 8 8 4.5L20 8M12 12.5v8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="pane-controls pane-controls-3d" aria-label="3D view controls">
+          <div class="pane-zoom-group" role="group" aria-label="3D zoom controls">
+            <button id="zoom3dOutBtn" type="button" title="Zoom out 3D view" aria-label="Zoom out 3D view">−</button>
+            <button id="fitBtn" type="button" title="Fit 3D view">⊞ Fit</button>
+            <button id="zoom3dInBtn" type="button" title="Zoom in 3D view" aria-label="Zoom in 3D view">+</button>
+          </div>
+          <details id="displayOptions3d" class="pane-display-control">
+            <summary>Display ▾</summary>
+            <div class="control-dropdown-menu">
+              <div class="pane-opacity-row pane-area-opacity-row">
+                <label class="toggle pane-opacity-label-only">Areas</label>
+                <input id="areaTransparency3d" data-transparency-target="3d" type="range" min="0" max="1" step="0.05" value="0" title="Area transparency" />
+                <span id="areaTransparency3dValue" class="pane-opacity-value">0%</span>
+              </div>
+              <div class="pane-opacity-row pane-all-lines-opacity-row">
+                <label class="toggle"><input data-display-target="3d" data-display-key="lines" type="checkbox" checked /> All Lines</label>
+                <input data-object-transparency-target="3d" data-object-transparency-key="lines" type="range" min="0" max="1" step="0.05" value="0" title="Global 3D line transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="3d:lines">0%</span>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="3d" data-display-key="massing" type="checkbox" checked /> Massing</label>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle pane-opacity-label-only">Typical Floor Lines</label>
+                <input data-object-transparency-target="3d" data-object-transparency-key="typicalLines" type="range" min="0" max="1" step="0.05" value="0.90" title="Typical floor perimeter-line transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="3d:typicalLines">90%</span>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="3d" data-display-key="boundaries" type="checkbox" checked /> Area Boundaries</label>
+                <input data-object-transparency-target="3d" data-object-transparency-key="areaBoundaries" type="range" min="0" max="1" step="0.05" value="0.15" title="Displayed Area Plan boundary transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="3d:areaBoundaries">15%</span>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="3d" data-display-key="propertyLines" type="checkbox" checked /> Prop. Lines</label>
+                <input data-object-transparency-target="3d" data-object-transparency-key="propertyLines" type="range" min="0" max="1" step="0.05" value="0" title="Property line transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="3d:propertyLines">0%</span>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="3d" data-display-key="walls" type="checkbox" /> Walls</label>
+                <input data-object-transparency-target="3d" data-object-transparency-key="walls" type="range" min="0" max="1" step="0.05" value="0.10" title="Wall transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="3d:walls">10%</span>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="3d" data-display-key="columns" type="checkbox" /> Columns</label>
+                <input data-object-transparency-target="3d" data-object-transparency-key="columns" type="range" min="0" max="1" step="0.05" value="0.85" title="Column transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="3d:columns">85%</span>
+              </div>
+            </div>
+          </details>
         </div>
       </div>
 
-      <aside class="splash-actions" aria-label="Start options">
-        <div class="splash-step">
-          <span class="splash-step-number">01</span>
-          <div>
-            <h2>Watch The Video Walkthrough</h2>
-            <p>Review the basic viewer flow before loading an area analysis file.</p>
-          </div>
-        </div>
-        <div class="splash-step">
-          <span class="splash-step-number">02</span>
-          <div>
-            <h2>Download The Sample File</h2>
-            <p>Use the included Block C sample file to test the viewer.</p>
-          </div>
-        </div>
-        <div class="splash-button-row">
-          <a class="splash-button" href="./blockC.NArch" download>Download Sample File</a>
-          <a class="splash-button splash-button-primary" href="./viewer.html">Open Viewer</a>
-        </div>
-      </aside>
-    </section>
+      <!-- Draggable resizer -->
+      <div id="paneResizer"></div>
 
-    <footer class="splash-footer">
-      <div class="splash-footer-firm">Nichols Architects</div>
-      <div class="splash-footer-project">Project Analysis</div>
-      <div class="splash-footer-accent" aria-hidden="true"></div>
+      <!-- 2D pane -->
+      <div id="pane2d">
+        <div id="map"></div>
+        <div class="pane-controls pane-controls-2d" aria-label="Floor plan controls">
+          <details id="displayOptions2d" class="pane-display-control">
+            <summary>Display ▾</summary>
+            <div class="control-dropdown-menu">
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="2d" data-display-key="propertyLines" type="checkbox" checked /> Prop. Lines</label>
+                <input data-object-transparency-target="2d" data-object-transparency-key="propertyLines" type="range" min="0" max="1" step="0.05" value="0" title="Property line transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="2d:propertyLines">0%</span>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="2d" data-display-key="walls" type="checkbox" checked /> Walls</label>
+                <input data-object-transparency-target="2d" data-object-transparency-key="walls" type="range" min="0" max="1" step="0.05" value="0" title="Wall transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="2d:walls">0%</span>
+              </div>
+              <div class="pane-opacity-row">
+                <label class="toggle"><input data-display-target="2d" data-display-key="columns" type="checkbox" checked /> Columns</label>
+                <input data-object-transparency-target="2d" data-object-transparency-key="columns" type="range" min="0" max="1" step="0.05" value="0.5" title="Column transparency" />
+                <span class="pane-opacity-value" data-object-transparency-value="2d:columns">50%</span>
+              </div>
+            </div>
+          </details>
+          <div class="pane-zoom-group" role="group" aria-label="Floor plan zoom controls">
+            <button id="planZoomOutBtn" type="button" title="Zoom out floor plan">−</button>
+            <button id="planFitBtn" type="button" title="Fit floor plan">⊞ Fit</button>
+            <button id="planZoomInBtn" type="button" title="Zoom in floor plan">+</button>
+          </div>
+        </div>
+        <div id="selectionInfoFloat" class="selection-info-float" hidden aria-live="polite"></div>
+      </div>
+
+      <div id="editorSelectionBox" class="editor-selection-box"></div>
+
+      <div id="hiddenToolbarButtons" aria-hidden="true">
+        <button id="mode2dBtn" type="button">2D Plan</button>
+        <button id="mode3dBtn" type="button" class="active">3D Areas</button>
+        <button id="editorModeBtn" type="button" title="Toggle Area Plan editor mode">Editor Mode</button>
+      </div>
+    </div>
+
+
+    <aside id="sidebar">
+      <div id="sidebarResizer" title="Resize data panel"></div>
+      <div style="display:none">
+        <div id="floorList" class="floor-list small"></div>
+        <div id="selectedInfo"></div>
+      </div>
+
+      <div class="panel report-panel">
+        <div class="sidebar-level-control">
+          <label for="floorSelect">Active Level</label>
+          <select id="floorSelect" title="Loaded Revit levels"></select>
+          <button id="chooseFileBtn" type="button" class="sidebar-icon-btn" title="Open area analysis file" aria-label="Open area analysis file"><span class="open-file-icon" aria-hidden="true"></span></button>
+          <button id="exportIconBtn" type="button" class="sidebar-icon-btn" title="Program Excel export is unavailable for this JSON" aria-label="Export program Excel workbook" disabled hidden><span class="export-file-icon" aria-hidden="true"></span></button>
+          <button id="settingsBtn" type="button" class="sidebar-icon-btn" title="Viewer settings" aria-label="Viewer settings">⚙</button>
+        </div>
+        <div class="sidebar-tabs" id="reportTabs">
+          <button type="button" class="active" data-tab="project">Summary</button>
+          <button type="button" data-tab="unitMix">Unit Mix</button>
+        </div>
+
+        <div id="projectTabPanel" class="sidebar-tab-panel active">
+          <div class="body" id="projectInfoPanel">
+            <div class="small">Import one combined Area Plan JSON or NArch file.</div>
+          </div>
+        </div>
+        <div id="unitMixTabPanel" class="sidebar-tab-panel">
+          <div class="body" id="unitMixPanel">
+            <div class="small">Import one combined Area Plan JSON or NArch file.</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="sidebarSplitResizer" class="sidebar-split-resizer" title="Resize report and legend panels"></div>
+
+      <div class="sidebar-file-actions" aria-label="File status">
+        <span class="loaded-label" id="loadedFileLabel" hidden>LOADED: <strong>no file</strong></span>
+      </div>
+
+      <section class="sidebar-legend-wrap" aria-label="Style Legend">
+        <div class="legend" id="styleLegend">
+          <div class="small">Import a file to build the area-category legend.</div>
+        </div>
+      </section>
+    </aside>
+
+    <div id="settingsModal" class="modal-backdrop" style="display:none">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2>Viewer Settings</h2>
+          <button id="settingsCloseBtn" type="button" class="ghost">Close</button>
+        </div>
+        <div class="modal-body">
+          <div class="settings-grid">
+            <label>Area border color <input id="setAreaLineColor" type="color" value="#000000" /></label>
+            <label class="settings-area-opacity-row">Area opacity <small>0 clear / 1 solid</small> <input id="setAreaOpacity" type="range" min="0" max="1"
+                step="0.05" value="1" /><span id="setAreaOpacityValue">1.00</span></label>
+            <label>Boundary line color <input id="setBoundaryLineColor" type="color" value="#000000" /></label>
+            <label>Property line color <input id="setPropertyLineColor" type="color" value="#ff0000" /></label>
+            <label class="settings-opacity-row">Property line opacity <small>0 clear / 1 solid</small> <input id="setPropertyLineOpacity"
+                type="range" min="0" max="1" step="0.05" value="1" /><span
+                id="setPropertyLineOpacityValue">1.00</span></label>
+            <label>Property line weight <small>2D stroke px</small> <input id="setPropertyLineWeight" type="range"
+                min="1" max="6" step="0.5" value="2" /><span id="setPropertyLineWeightValue">3.0</span></label>
+            <label>Wall fill color <input id="setWallFillColor" type="color" value="#b6b6b6" /></label>
+            <label>Wall edge color <input id="setWallLineColor" type="color" value="#b6b6b6" /></label>
+            <label class="settings-opacity-row">Wall opacity <small>0 clear / 1 solid</small> <input id="setWallOpacity" type="range" min="0" max="1"
+                step="0.05" value="1" /><span id="setWallOpacityValue">1.00</span></label>
+            <label>Column fill color <input id="setColumnFillColor" type="color" value="#b6b6b6" /></label>
+            <label>Column edge color <input id="setColumnLineColor" type="color" value="#b6b6b6" /></label>
+            <label class="settings-opacity-row">Column opacity <small>0 clear / 1 solid</small> <input id="setColumnOpacity" type="range" min="0"
+                max="1" step="0.05" value="0.15" /><span id="setColumnOpacityValue">0.15</span></label>
+          </div>
+          <div class="settings-subtitle">Area colors by area_category</div>
+          <div id="areaGroupSettings" class="group-color-grid"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="developerToolsBtn" type="button">Editor</button>
+          <button id="settingsResetBtn" type="button">Reset Defaults</button>
+          <button id="settingsApplyBtn" type="button">Apply</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sheet footer / title block -->
+    <footer class="sheet-footer">
+      <div class="ftitem ftfirm">Nichols Architects</div>
+      <div class="ftitem ftproject" id="sheetTitleDisplay">Project Analysis</div>
+      <div class="footer-level-id">
+        <div class="level-number" id="levelNumberDisplay">—</div>
+        <div class="level-caption">Level</div>
+      </div>
+      <div class="footer-end-accent" aria-hidden="true"></div>
     </footer>
-  </main>
-  <script>
-    const instructionVideo = document.getElementById('instructionVideo');
-    const instructionPlayBtn = document.getElementById('instructionPlayBtn');
+  </div>
 
-    if (instructionVideo && instructionPlayBtn) {
-      instructionPlayBtn.addEventListener('click', () => {
-        instructionVideo.classList.add('is-started');
-        instructionPlayBtn.hidden = true;
-        instructionVideo.play();
-      });
-    }
-  </script>
+  <!-- ── Presentation-sheet wiring: header/footer display only. ──
+     Purely additive; does not touch viewer logic, parsing, or rendering above. -->
+
+  <!-- ── Empty viewer state wiring. Keeps no-file canvas blank until a JSON is loaded. ── -->
+
+
+  <!--
+    Viewer interaction v28:
+    - Mouse center wheel zooms both 3D and 2D panes.
+    - Repeated tower floors are condensed into logical typical-floor ranges in the level selector.
+    - Initial 3D load and Fit frame the complete rendered level stack around its true 3D bounds centroid.
+    - A selected Area temporarily becomes the 3D orbit target; deselection restores the whole-dataset center.
+    - Typical-floor perimeter lines and displayed Area Plan boundaries have independent 3D transparency controls.
+
+    Viewer export contract v1:
+    - Save JSON: full area_working package, immutable baseline + all changesets.
+    - Export to Transformer: top-level area_working package with workflow_stage
+      viewer_approved_handoff and an area_viewer_handoff_manifest.
+    - The export button is the explicit manual approval action for draft changesets.
+    - Boundary editing supports add/update/delete operations against stable IDs.
+    - Line and rectangle are exact lines; circle is 24 straight line segments.
+    - Area changes shown in the viewer are a JSTS polygonized preview only.
+    - The second transformer remains responsible for authoritative deterministic topology,
+      validation, and creation of a one-scope revit_area_import package.
+  -->
+
+  <script type="module" src="./assets/js/main.js"></script>
 </body>
 
 </html>

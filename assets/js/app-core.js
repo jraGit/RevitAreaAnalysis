@@ -1431,6 +1431,7 @@ export function initializeApplication() {
     'BRANDED RESIDENTIAL',
     'SHORT TERM RENTAL (STR)',
     'HOTEL',
+    'LIFESTYLE',
     'OFFICE',
     'RETAIL/COMMERCIAL'
   ]);
@@ -1479,7 +1480,7 @@ export function initializeApplication() {
 
   function inferIncludesFromCategory(category, field) {
     if (field === 'gross') return !isNotCountedCategory(category);
-    if (field === 'unitMix') return ['BRANDED RESIDENTIAL', 'SHORT TERM RENTAL (STR)', 'HOTEL'].includes(normalizedCategoryRuleKey(category));
+    if (field === 'unitMix') return ['BRANDED RESIDENTIAL', 'SHORT TERM RENTAL (STR)', 'HOTEL', 'LIFESTYLE'].includes(normalizedCategoryRuleKey(category));
     if (field === 'sellable') return isSellableCategory(category);
     return false;
   }
@@ -1599,6 +1600,7 @@ export function initializeApplication() {
       branded_residential_units: 0,
       short_term_rental_units: 0,
       hotel_guestroom_count: 0,
+      lifestyle_units: 0,
       amenity_sqft: 0,
       core_sqft: 0,
       circulation_sqft: 0,
@@ -1615,6 +1617,7 @@ export function initializeApplication() {
         if (cat === 'BRANDED RESIDENTIAL') acc.branded_residential_units += 1;
         if (cat === 'SHORT TERM RENTAL (STR)') acc.short_term_rental_units += 1;
         if (cat === 'HOTEL') acc.hotel_guestroom_count += 1;
+        if (cat === 'LIFESTYLE') acc.lifestyle_units += 1;
       }
       if (cat.includes('AMENIT')) acc.amenity_sqft += sqft;
       if (cat.includes('CORE')) acc.core_sqft += sqft;
@@ -1663,7 +1666,8 @@ export function initializeApplication() {
     const totals = {
       brandedResidentialUnits: 0,
       shortTermRentalUnits: 0,
-      hotelGuestrooms: 0
+      hotelGuestrooms: 0,
+      lifestyleUnits: 0
     };
     for (const row of rows || []) {
       if (!row.include_in_unit_mix) continue;
@@ -1671,6 +1675,7 @@ export function initializeApplication() {
       if (category === 'BRANDED RESIDENTIAL') totals.brandedResidentialUnits += 1;
       if (category === 'SHORT TERM RENTAL (STR)') totals.shortTermRentalUnits += 1;
       if (category === 'HOTEL') totals.hotelGuestrooms += 1;
+      if (category === 'LIFESTYLE') totals.lifestyleUnits += 1;
     }
     return totals;
   }
@@ -1710,6 +1715,7 @@ export function initializeApplication() {
         brandedResidentialUnits: unitCategoryCounts.brandedResidentialUnits,
         shortTermRentalUnits: unitCategoryCounts.shortTermRentalUnits,
         hotelGuestrooms: unitCategoryCounts.hotelGuestrooms,
+        lifestyleUnits: unitCategoryCounts.lifestyleUnits,
         excludedExteriorAreaCount: 0,
         excludedExteriorAreaSqft: 0,
         areaTypeRule: summary.area_type_rule || '',
@@ -1792,7 +1798,8 @@ export function initializeApplication() {
   const UNIT_MIX_DISPLAY_CATEGORIES = new Set([
     'BRANDED RESIDENTIAL',
     'SHORT TERM RENTAL (STR)',
-    'HOTEL'
+    'HOTEL',
+    'LIFESTYLE'
   ]);
 
   function isDisplayedUnitMixCategory(row) {
@@ -1862,6 +1869,7 @@ export function initializeApplication() {
       { label: 'Short Term Rental Units', value: r => fmt(r.short_term_rental_units, 0) },
       { label: 'Branded Residential Units', value: r => fmt(r.branded_residential_units, 0) },
       { label: 'Hotel Guestrooms', value: r => fmt(r.hotel_guestrooms ?? r.hotel_guestroom_count, 0) },
+      { label: 'Lifestyle Units', value: r => fmt(r.lifestyle_units, 0) },
       { label: 'Amenity SF', value: r => sf(r.amenity_sqft) },
       { label: 'Core SF', value: r => sf(r.core_sqft) },
       { label: 'Circulation SF', value: r => sf(r.circulation_sqft) },
@@ -1977,6 +1985,7 @@ export function initializeApplication() {
         <div><span>Branded Residential</span><strong>${fmt(summary.brandedResidentialUnits, 0)}</strong></div>
         <div><span>Short Term Rental (STR)</span><strong>${fmt(summary.shortTermRentalUnits, 0)}</strong></div>
         <div><span>Hotel Guestrooms</span><strong>${fmt(summary.hotelGuestrooms, 0)}</strong></div>
+        <div><span>Lifestyle</span><strong>${fmt(summary.lifestyleUnits, 0)}</strong></div>
       </div>
     </div>
   </div>
@@ -2109,6 +2118,7 @@ export function initializeApplication() {
     state.display3d.propertyLines = true;
     state.display3d.walls = false;
     state.display3d.columns = false;
+    state.display3d.massing = true;
     state.display3d.areaTransparency = 0;
     state.display3d.lineTransparency = 0;
     state.display3d.typicalLineTransparency = 0.90;
@@ -2282,34 +2292,71 @@ export function initializeApplication() {
     });
   }
 
+  function typicalFocusDimFactor() {
+    return 0.12;
+  }
+
+  function belongsToActiveTypicalGroup(obj, activeTypicalGroup) {
+    if (!activeTypicalGroup) return false;
+    const data = obj?.userData;
+    return !!(data && (data.group === activeTypicalGroup || data.typicalGroup === activeTypicalGroup));
+  }
+
   function refreshActiveFloorPerimeterHighlight() {
     if (!threeState.worldGroup) return;
     const activeFloor = state.floors[state.activeIndex] || null;
+    const activeTypicalGroup = activeFloor?._typicalGroup || null;
     const highlightColor = getHighlightStyle().color || '#ff2f00';
+    const dimFactor = typicalFocusDimFactor();
 
     threeState.worldGroup.traverse(obj => {
-      if (obj?.userData?.kind !== 'floorPerimeter' || !obj.material) return;
+      const kind = obj?.userData?.kind;
 
-      const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
-      const isActive = !!(activeFloor && obj.userData.floor === activeFloor);
+      // Solid volumes/slabs: areas, typical-floor massing, walls, columns.
+      if ((kind === 'area' || kind === 'typicalFloorVolume' || kind === 'wall' || kind === 'column') && obj.material && !Array.isArray(obj.material)) {
+        const baseOpacity = clampOpacity(obj.userData.baseOpacity ?? obj.material.opacity ?? 1, 1);
+        // When a Typical level is active, everything stays at its normal
+        // appearance except the massing and representative plan belonging to
+        // that typical group - those dim so the selected group reads clearly.
+        const isDimmed = !!activeTypicalGroup && !belongsToActiveTypicalGroup(obj, activeTypicalGroup);
+        const finalOpacity = isDimmed ? baseOpacity * dimFactor : baseOpacity;
+        obj.material.opacity = finalOpacity;
+        obj.material.transparent = isDimmed || !isOpaque(baseOpacity);
+        obj.material.depthWrite = !isDimmed && isOpaque(baseOpacity);
+        obj.material.needsUpdate = true;
+        return;
+      }
 
-      // Start from the already-resolved global line opacity, then strengthen
-      // only the active level perimeter so the current Level reads clearly in 3D.
-      materials.forEach(mat => {
-        if (!mat) return;
-        const baseColor = obj.userData.baseColor || state.styleSettings.boundaryLineColor || '#111111';
-        mat.color.set(isActive ? highlightColor : baseColor);
+      // Line-based objects: floor perimeters, area outlines, boundaries,
+      // property lines, and the typical-floor massing edge outline.
+      if (isThreeLineObject(obj) && !isHelperLineObject(obj) && obj.material) {
+        const materials = Array.isArray(obj.material) ? obj.material : [obj.material];
+        // The plain active-floor perimeter highlight only applies to a
+        // regular (non-typical) selected floor; typical selection is
+        // communicated by dimming everything outside the group instead.
+        const isActiveFloorLine = kind === 'floorPerimeter' && !activeTypicalGroup
+          && !!(activeFloor && obj.userData.floor === activeFloor && !obj.userData.typicalGroup);
+        const isDimmed = !!activeTypicalGroup && !belongsToActiveTypicalGroup(obj, activeTypicalGroup);
 
-        if (isActive) {
-          const boostedOpacity = clampOpacity(Math.max(mat.opacity ?? 1, 1), 1);
-          mat.opacity = boostedOpacity;
-          mat.transparent = !isOpaque(boostedOpacity);
-          mat.depthWrite = isOpaque(boostedOpacity);
-        }
-        mat.needsUpdate = true;
-      });
+        materials.forEach(mat => {
+          if (!mat) return;
+          if (kind === 'floorPerimeter') {
+            const baseColor = obj.userData.baseColor || state.styleSettings.boundaryLineColor || '#111111';
+            mat.color.set(isActiveFloorLine ? highlightColor : baseColor);
+          }
 
-      obj.renderOrder = isActive ? 65 : 45;
+          const resolvedOpacity = resolvedThreeLineOpacity(obj, mat);
+          const finalOpacity = isActiveFloorLine
+            ? clampOpacity(Math.max(resolvedOpacity, 1), 1)
+            : (isDimmed ? resolvedOpacity * dimFactor : resolvedOpacity);
+          mat.opacity = finalOpacity;
+          mat.transparent = !isOpaque(finalOpacity);
+          mat.depthWrite = isOpaque(finalOpacity);
+          mat.needsUpdate = true;
+        });
+
+        if (kind === 'floorPerimeter') obj.renderOrder = isActiveFloorLine ? 65 : 45;
+      }
     });
   }
 
@@ -5526,6 +5573,8 @@ export function initializeApplication() {
     renderActiveFloor(fit);
     updateFloorControls();
     updateSummary();
+    refreshActiveFloorPerimeterHighlight();
+    mark3DDirty();
     if (state.mode === '3d') {
       clearSelection(true);
       update3DLabels();
@@ -5615,7 +5664,7 @@ export function initializeApplication() {
         }
         if (obj.userData?.kind === 'wall') obj.visible = state.display3d.walls;
         if (obj.userData?.kind === 'column') obj.visible = state.display3d.columns;
-        if (obj.userData?.kind === 'typicalFloorVolume') obj.visible = true;
+        if (obj.userData?.kind === 'typicalFloorVolume') obj.visible = state.display3d.massing !== false;
         if (obj.userData?.kind === 'typicalFloorVolumeEdge') obj.visible = false;
         if (isThreeLineObject(obj) && !isHelperLineObject(obj) && !showAll3DLines) obj.visible = false;
       });
@@ -5850,6 +5899,7 @@ export function initializeApplication() {
     'BRANDED RESIDENTIAL',
     'SHORT TERM RENTAL (STR)',
     'HOTEL',
+    'LIFESTYLE',
     'OFFICE'
   ]);
 
@@ -5943,6 +5993,31 @@ export function initializeApplication() {
     };
   }
 
+  function floorTowerZoneKey(floor) {
+    const levelName = normalizeReportKey(floor?.levelName || floor?.name);
+    if (/^S\b/.test(levelName)) return 'SOUTH';
+    if (/^N\b/.test(levelName)) return 'NORTH';
+    const counts = new Map();
+    for (const area of floor?.areas || []) {
+      const key = normalizeReportKey(area?.tower);
+      if (!key || key === '0') continue;
+      counts.set(key, (counts.get(key) || 0) + 1);
+    }
+    let best = '';
+    let bestCount = 0;
+    for (const [key, count] of counts.entries()) {
+      if (count > bestCount) { best = key; bestCount = count; }
+    }
+    if (best === 'S' || best.includes('SOUTH')) return 'SOUTH';
+    if (best === 'N' || best.includes('NORTH')) return 'NORTH';
+    return '';
+  }
+
+  function typicalGroupFloorsShareZone(floors) {
+    const zones = new Set((floors || []).map(floorTowerZoneKey).filter(Boolean));
+    return zones.size <= 1;
+  }
+
   function buildExplicitTypicalFloorGroups(floors) {
     const rawGroups = Array.isArray(state.loadedJson?.derived?.typical_floor_groups)
       ? state.loadedJson.derived.typical_floor_groups
@@ -5959,6 +6034,15 @@ export function initializeApplication() {
     for (const meta of rawGroups) {
       const groupFloors = (meta?.view_ids || []).map(id => floorByView.get(String(id))).filter(Boolean);
       if (groupFloors.length < 2) continue;
+      // The transformer export is treated as authoritative, but it has been observed to
+      // bundle levels from different towers into the same group (or point representative_view_id
+      // at a view from another tower's level). Rendering that as-is draws one tower's boundary
+      // lines/plan on top of another tower's typical-floor volume, so we refuse to trust a group
+      // that mixes towers and fall back to rendering those levels individually instead.
+      if (!typicalGroupFloorsShareZone(groupFloors)) {
+        console.warn(`Typical floor group "${meta.group_id || meta.signature || ''}" from the transformer export mixes levels from different towers; skipping so those levels render individually.`, meta);
+        continue;
+      }
       const group = makeTypicalGroupFromRun(String(meta.signature || meta.group_id || ''), groupFloors, groups.length + 1);
       if (!group) continue;
       group.id = String(meta.group_id || `typical-${groups.length + 1}`);
@@ -5969,7 +6053,12 @@ export function initializeApplication() {
       group.groupingBasis = Array.isArray(meta.grouping_basis) ? meta.grouping_basis.slice() : [];
       group.dominantCategory = String(meta.dominant_category || group.dominantCategory || 'Uncategorized');
       group.floorToFloorFt = toNum(meta.floor_to_floor_ft, group.floorToFloorFt);
-      group.representativeFloor = floorByView.get(String(meta.representative_view_id || '')) || group.representativeFloor;
+      const explicitRepresentative = floorByView.get(String(meta.representative_view_id || ''));
+      if (explicitRepresentative && groupFloors.includes(explicitRepresentative)) {
+        group.representativeFloor = explicitRepresentative;
+      } else if (meta.representative_view_id) {
+        console.warn(`Typical floor group "${group.id}" representative_view_id from the transformer export is not one of its own view_ids; using the computed representative floor instead.`, meta);
+      }
       group.color = getAreaFillColor({ area_category: group.dominantCategory });
       groups.push(group);
     }
@@ -6007,20 +6096,31 @@ export function initializeApplication() {
       const typicalGap = medianNumber(allGaps, 12);
       const maxContinuousGap = Math.max(typicalGap * 1.8, typicalGap + 6, 18);
       let run = [];
+      let runZone = '';
       for (let i = 0; i < sorted.length; i++) {
         const floor = sorted[i];
+        const floorZone = floorTowerZoneKey(floor);
         if (!run.length) {
           run.push(floor);
+          runZone = floorZone;
           continue;
         }
         const previous = run[run.length - 1];
         const gap = toNum(floor.heightFt, NaN) - toNum(previous.heightFt, NaN);
-        if (Number.isFinite(gap) && gap > 0 && gap <= maxContinuousGap) {
+        // Two floors can share an identical footprint signature (e.g. mirrored unit
+        // layouts, or view geometry exported in view-local coordinates) even when they
+        // belong to different towers. Never merge across a tower boundary just because
+        // the footprint matched - that's what produced one tower's plan rendering
+        // inside the other tower's typical-floor volume.
+        const zoneConflict = runZone && floorZone && runZone !== floorZone;
+        if (Number.isFinite(gap) && gap > 0 && gap <= maxContinuousGap && !zoneConflict) {
           run.push(floor);
+          if (!runZone) runZone = floorZone;
         } else {
           const group = makeTypicalGroupFromRun(signature, run, candidateGroups.length + 1);
           if (group) candidateGroups.push(group);
           run = [floor];
+          runZone = floorZone;
         }
       }
       const group = makeTypicalGroupFromRun(signature, run, candidateGroups.length + 1);
@@ -6300,12 +6400,14 @@ export function initializeApplication() {
     addTypicalGroupPerimeterLines3D(typicalGroup, group);
 
     // Do not draw the base and top floor plans for typical groups. Show one
-    // representative plan at the center height of the box so the stack reads
+    // representative plan just above the base of the box so the stack reads
     // as a clean extrusion with a single floor-plan reference.
-    const representativeY = typicalGroupCenterY(group);
-    renderTypicalFloorRepresentativePlan3D(group, typicalGroup, representativeY);
-    // Typical floor groups always receive one grouped datum label.
-    addTypicalGroup3DLabel(group, representativeY);
+    const representativePlanY = baseY + 0.1;
+    renderTypicalFloorRepresentativePlan3D(group, typicalGroup, representativePlanY);
+    // Typical floor groups always receive one grouped datum label, kept at the
+    // vertical center of the box so it reads against the full stack height.
+    const representativeLabelY = typicalGroupCenterY(group);
+    addTypicalGroup3DLabel(group, representativeLabelY);
 
     threeState.worldGroup.add(typicalGroup);
   }

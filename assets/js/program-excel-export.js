@@ -183,6 +183,7 @@ function sheetStyles() {
   const sectionBorder = { style: 'thin', color: { argb: 'FFB7B7B7' } };
   const headerBorder = { style: 'thin', color: { argb: 'FF666666' } };
   const totalBorder = { style: 'thin', color: { argb: 'FF93C47D' } };
+  const subtotalBorder = { style: 'thin', color: { argb: 'FF6FA8DC' } };
   return {
     title: {
       font: { bold: true, color: { argb: 'FFFFFFFF' }, size: 16 },
@@ -236,6 +237,23 @@ function sheetStyles() {
       fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9EAD3' } },
       border: { top: totalBorder, right: totalBorder, bottom: totalBorder, left: totalBorder },
       numFmt: '0.0%'
+    },
+    subtotal: {
+      font: { bold: true },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCFE2F3' } },
+      border: { top: subtotalBorder, right: subtotalBorder, bottom: subtotalBorder, left: subtotalBorder }
+    },
+    subtotalSf: {
+      font: { bold: true },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCFE2F3' } },
+      border: { top: subtotalBorder, right: subtotalBorder, bottom: subtotalBorder, left: subtotalBorder },
+      numFmt: '#,##0.00 "SF"'
+    },
+    subtotalUnits: {
+      font: { bold: true },
+      fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFCFE2F3' } },
+      border: { top: subtotalBorder, right: subtotalBorder, bottom: subtotalBorder, left: subtotalBorder },
+      numFmt: '#,##0 "UNITS"'
     }
   };
 }
@@ -323,8 +341,40 @@ function writeTowerSheet(wb, program, styles, sheetName, towerName, towerViews) 
   addHeaderRow(ws, 3, headers, styles.head);
   const firstExcelRow = 4;
 
-  towerViews.forEach((item, index) => {
-    const excelRow = firstExcelRow + index;
+  let cursorRow = firstExcelRow;
+  let bandStartRow = firstExcelRow;
+  let bandCategory = towerViews[0]?.program_category ?? '';
+  let bandUnitCount = 0;
+  let bandUnitSf = 0;
+  let bandUnitTypeCounts = unitTypes.map(() => 0);
+  const subtotalRowNumbers = [];
+
+  const writeBandSubtotal = (category, first, last) => {
+    const excelRow = cursorRow;
+    setValue(ws, `A${excelRow}`, `${category} SUBTOTAL`, styles.subtotal);
+    setFormula(ws, `B${excelRow}`, `SUM(B${first}:B${last})`, bandUnitCount, styles.subtotalUnits);
+    setFormula(ws, `C${excelRow}`, `SUM(C${first}:C${last})`, bandUnitSf, styles.subtotalSf);
+    setFormula(ws, `D${excelRow}`, `IFERROR(C${excelRow}/B${excelRow},0)`, formulaResult(bandUnitSf / bandUnitCount), styles.subtotalSf);
+    unitTypes.forEach((unitType, typeIndex) => {
+      const column = col(5 + typeIndex);
+      setFormula(ws, `${column}${excelRow}`, `SUM(${column}${first}:${column}${last})`, bandUnitTypeCounts[typeIndex], styles.subtotalUnits);
+    });
+    subtotalRowNumbers.push(excelRow);
+    cursorRow += 1;
+    bandUnitCount = 0;
+    bandUnitSf = 0;
+    bandUnitTypeCounts = unitTypes.map(() => 0);
+  };
+
+  towerViews.forEach(item => {
+    const category = item.program_category;
+    if (category !== bandCategory && cursorRow > bandStartRow) {
+      writeBandSubtotal(bandCategory, bandStartRow, cursorRow - 1);
+      bandStartRow = cursorRow;
+    }
+    bandCategory = category;
+
+    const excelRow = cursorRow;
     const view = item.view || '';
     const matchingUnits = unitRows(rows, { view });
     const unitSf = matchingUnits.reduce((sum, row) => sum + num(row.sf), 0);
@@ -334,33 +384,44 @@ function writeTowerSheet(wb, program, styles, sheetName, towerName, towerViews) 
     setFormula(ws, `D${excelRow}`, `IFERROR(C${excelRow}/B${excelRow},0)`, formulaResult(unitSf / matchingUnits.length), styles.sf);
     unitTypes.forEach((unitType, typeIndex) => {
       const column = col(5 + typeIndex);
+      const count = countRows(rows, { view, unit_type: unitType, unit: 'YES' });
       setFormula(
         ws,
         `${column}${excelRow}`,
         `COUNTIFS(${registerRange('B', lastRegisterRow)},${quoted(view)},${registerRange('L', lastRegisterRow)},${quoted(unitType)},${registerRange('K', lastRegisterRow)},"YES")`,
-        countRows(rows, { view, unit_type: unitType, unit: 'YES' }),
+        count,
         styles.units
       );
+      bandUnitTypeCounts[typeIndex] += count;
     });
+
+    bandUnitCount += matchingUnits.length;
+    bandUnitSf += unitSf;
+    cursorRow += 1;
   });
 
-  const lastExcelRow = firstExcelRow + towerViews.length - 1;
-  const totalExcelRow = towerViews.length + 5;
+  if (cursorRow > bandStartRow) {
+    writeBandSubtotal(bandCategory, bandStartRow, cursorRow - 1);
+  }
+
+  const lastBodyRow = cursorRow - 1;
+  const totalExcelRow = cursorRow + 1;
   const towerUnitRows = unitRows(rows, { tower: towerName });
   const towerUnitSf = towerUnitRows.reduce((sum, row) => sum + num(row.sf), 0);
   setValue(ws, `A${totalExcelRow}`, `${towerName} TOTAL`, styles.section);
   if (towerViews.length) {
-    setFormula(ws, `B${totalExcelRow}`, `SUM(B${firstExcelRow}:B${lastExcelRow})`, towerUnitRows.length, styles.totalUnits);
-    setFormula(ws, `C${totalExcelRow}`, `SUM(C${firstExcelRow}:C${lastExcelRow})`, towerUnitSf, styles.totalSf);
+    const subtotalCells = column => subtotalRowNumbers.map(row => `${column}${row}`).join(',');
+    setFormula(ws, `B${totalExcelRow}`, `SUM(${subtotalCells('B')})`, towerUnitRows.length, styles.totalUnits);
+    setFormula(ws, `C${totalExcelRow}`, `SUM(${subtotalCells('C')})`, towerUnitSf, styles.totalSf);
     setFormula(ws, `D${totalExcelRow}`, `IFERROR(C${totalExcelRow}/B${totalExcelRow},0)`, formulaResult(towerUnitSf / towerUnitRows.length), styles.totalSf);
     for (let columnIndex = 5; columnIndex <= headers.length; columnIndex += 1) {
       const column = col(columnIndex);
       const unitType = unitTypes[columnIndex - 5];
-      setFormula(ws, `${column}${totalExcelRow}`, `SUM(${column}${firstExcelRow}:${column}${lastExcelRow})`, countRows(rows, { tower: towerName, unit_type: unitType, unit: 'YES' }), styles.totalUnits);
+      setFormula(ws, `${column}${totalExcelRow}`, `SUM(${subtotalCells(column)})`, countRows(rows, { tower: towerName, unit_type: unitType, unit: 'YES' }), styles.totalUnits);
     }
   }
   ws.views = [{ state: 'frozen', xSplit: 1, ySplit: 3 }];
-  ws.autoFilter = { from: 'A3', to: `${col(headers.length)}${towerViews.length + 3}` };
+  ws.autoFilter = { from: 'A3', to: `${col(headers.length)}${lastBodyRow}` };
   applyColumnWidths(ws, { A: 27, B: 15, C: 18, D: 18 });
   for (let i = 5; i <= headers.length; i += 1) ws.getColumn(i).width = 14;
 }
@@ -445,6 +506,7 @@ function writeOverallSheet(wb, program, styles) {
   const brandedUnits = countRows(rows, { cat: 'BRANDED RESIDENTIAL', unit: 'YES' });
   const strUnits = countRows(rows, { cat: 'SHORT TERM RENTAL (STR)', unit: 'YES' });
   const hotelUnits = rows.filter(row => ['HOTEL', 'HOTEL GUESTROOM'].includes(normalize(row.cat)) && yes(row.unit)).length;
+  const lifestyleUnits = countRows(rows, { cat: 'LIFESTYLE', unit: 'YES' });
 
   setValue(ws, 'A7', 'Gross SF', styles.section);
   setFormula(ws, 'B7', `SUM(${registerRange('I', lastRegisterRow)})`, grossSf, styles.sf);
@@ -464,10 +526,12 @@ function writeOverallSheet(wb, program, styles) {
     hotelUnits,
     styles.units
   );
+  setValue(ws, 'A13', 'LIFESTYLE', styles.section);
+  setFormula(ws, 'B13', `COUNTIFS(${registerRange('F', lastRegisterRow)},"LIFESTYLE",${registerRange('K', lastRegisterRow)},"YES")`, lifestyleUnits, styles.units);
 
-  addHeaderRow(ws, 14, ['Category', 'Gross SF', 'Sellable SF'], styles.head);
+  addHeaderRow(ws, 15, ['Category', 'Gross SF', 'Sellable SF'], styles.head);
   categories.forEach((category, index) => {
-    const excelRow = index + 15;
+    const excelRow = index + 16;
     setValue(ws, `A${excelRow}`, category, styles.text);
     setFormula(ws, `B${excelRow}`, `SUMIF(${registerRange('F', lastRegisterRow)},A${excelRow},${registerRange('I', lastRegisterRow)})`, sumRows(rows, { cat: category }), styles.sf);
     setFormula(ws, `C${excelRow}`, `SUMIFS(${registerRange('I', lastRegisterRow)},${registerRange('F', lastRegisterRow)},A${excelRow},${registerRange('J', lastRegisterRow)},"YES")`, sumRows(rows, { cat: category, sell: 'YES' }), styles.sf);
@@ -487,7 +551,8 @@ function writeValidationSheet(wb, program, styles) {
     ['Sellable / Leasable SF', sellableSf, 'OVERALL!B8', 'SF'],
     ['BRANDED RESIDENTIAL', countRows(rows, { cat: 'BRANDED RESIDENTIAL', unit: 'YES' }), 'OVERALL!B10', 'UNITS'],
     ['SHORT TERM RENTAL (STR)', countRows(rows, { cat: 'SHORT TERM RENTAL (STR)', unit: 'YES' }), 'OVERALL!B11', 'UNITS'],
-    ['HOTEL GUESTROOM', rows.filter(row => ['HOTEL', 'HOTEL GUESTROOM'].includes(normalize(row.cat)) && yes(row.unit)).length, 'OVERALL!B12', 'UNITS']
+    ['HOTEL GUESTROOM', rows.filter(row => ['HOTEL', 'HOTEL GUESTROOM'].includes(normalize(row.cat)) && yes(row.unit)).length, 'OVERALL!B12', 'UNITS'],
+    ['LIFESTYLE', countRows(rows, { cat: 'LIFESTYLE', unit: 'YES' }), 'OVERALL!B13', 'UNITS']
   ];
   checks.forEach(([name, sourceValue, formula, measure], index) => {
     const excelRow = index + 4;
